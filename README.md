@@ -4,6 +4,9 @@ CLI tool to migrate volumes and resources between Coolify servers.
 
 Coolify lacks a built-in migration feature ([Issue #5014](https://github.com/coollabsio/coolify/issues/5014)). This tool fills that gap.
 
+> **Warning**
+> This is a community-developed tool, not an official Coolify product. It is provided as-is with no warranties or guarantees. **Always backup your data before migration.** Test with `--dry-run` first. The author is not responsible for any data loss or service disruption.
+
 ## Features
 
 - Migrate resources between Coolify servers
@@ -32,11 +35,19 @@ cp .env.example .env
 nano .env  # Add your API token
 ```
 
-### NPM (Coming Soon)
+### NPM
 
 ```bash
 npm install -g coolify-mover
 ```
+
+## Before You Start
+
+1. **Backup everything** - Create snapshots of your servers/volumes
+2. **Test with --dry-run** - Always run with `--dry-run` flag first
+3. **Stop databases** - Stop PostgreSQL/MySQL before migration
+4. **Check disk space** - Ensure target server has enough space
+5. **Off-peak hours** - Run migrations during low traffic periods
 
 ## Configuration
 
@@ -169,6 +180,17 @@ This ensures data consistency.
 ## Contributing
 
 Pull requests welcome! Please open an issue first for major changes.
+
+## Disclaimer
+
+This tool is provided "as is" without warranty of any kind. This is a community project and is **not affiliated with or endorsed by Coolify**. Use at your own risk.
+
+- No guarantee of data integrity during transfer
+- Not tested on all Coolify versions
+- May not work with all resource types
+- Author is not responsible for data loss or downtime
+
+**Always maintain backups and test in a non-production environment first.**
 
 ## License
 
