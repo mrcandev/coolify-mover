@@ -1,0 +1,42 @@
+{
+  "name": "coolify-mover",
+  "version": "1.0.0",
+  "description": "CLI tool to migrate volumes and resources between Coolify servers",
+  "main": "src/index.js",
+  "bin": {
+    "coolify-mover": "./bin/coolify-mover.js"
+  },
+  "scripts": {
+    "start": "node bin/coolify-mover.js"
+  },
+  "keywords": [
+    "coolify",
+    "migration",
+    "docker",
+    "volumes",
+    "rsync",
+    "cli"
+  ],
+  "author": "Ömer AYDINOĞLU <mrcandev@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mrcandev/coolify-mover.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mrcandev/coolify-mover/issues"
+  },
+  "homepage": "https://github.com/mrcandev/coolify-mover#readme",
+  "dependencies": {
+    "axios": "^1.6.0",
+    "commander": "^11.1.0",
+    "dotenv": "^16.3.1",
+    "node-ssh": "^13.1.0",
+    "yaml": "^2.3.4",
+    "ora": "^5.4.1",
+    "chalk": "^4.1.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

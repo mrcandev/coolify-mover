@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+
+# Environment
+.env
+.env.local
+.env.*
+!.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Temp files
+/tmp/
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*.sublime-*
+
+# Build
+dist/
+build/
+
+# Claude Code / AI
+.claude/
+
+# OS
+.DS_Store
+*.DS_Store
+
+# Test
+coverage/
+.nyc_output/
+
+# Misc
+*.bak
+*.tmp
+*.temp
