@@ -55,7 +55,21 @@ class CoolifyAPI {
   }
 
   async getDatabases() {
-    const { data } = await this.client.get('/databases');
+    try {
+      const { data } = await this.client.get('/databases');
+      return data;
+    } catch {
+      return [];
+    }
+  }
+
+  async stopDatabase(uuid) {
+    const { data } = await this.client.post(`/databases/${uuid}/stop`);
+    return data;
+  }
+
+  async startDatabase(uuid) {
+    const { data } = await this.client.post(`/databases/${uuid}/start`);
     return data;
   }
 

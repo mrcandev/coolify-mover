@@ -46,7 +46,13 @@ COOLIFY_API_TOKEN=your_token_here
 SSH_KEYS_PATH=/data/coolify/ssh/keys
 ```
 
-Get API token from: **Coolify Dashboard → Settings → API Tokens**
+Get API token:
+1. **Coolify Dashboard → Keys & Tokens → API Tokens**
+2. Enable "API Access" in **Settings → Advanced → API Settings** first
+3. Create token with permissions:
+   - `read` (required)
+   - `write` (for --stop-source flag)
+   - or just select `root` for all permissions
 
 Database password is auto-detected from coolify-db container.
 

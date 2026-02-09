@@ -291,6 +291,455 @@ class ResourceCloner {
     return clonedVolumes;
   }
 
+  // Clone standalone PostgreSQL
+  async clonePostgresql(sourceUuid, targetServerId, targetDestinationId, options = {}) {
+    const source = await this.getStandaloneDatabase('standalone_postgresqls', sourceUuid);
+    if (!source) {
+      throw new Error(`PostgreSQL not found: ${sourceUuid}`);
+    }
+
+    const newUuid = this.db.generateUuid();
+    const newName = options.newName || source.name;
+
+    logger.info(`Cloning PostgreSQL: ${source.name} -> ${newName}`);
+    logger.info(`  New UUID: ${newUuid}`);
+
+    const insertResult = await this.db.query(`
+      INSERT INTO standalone_postgresqls (
+        uuid, name, description, postgres_user, postgres_password, postgres_db,
+        postgres_initdb_args, postgres_host_auth_method, init_scripts,
+        status, image, is_public, public_port, ports_mappings,
+        limits_memory, limits_memory_swap, limits_memory_swappiness,
+        limits_memory_reservation, limits_cpus, limits_cpuset, limits_cpu_shares,
+        destination_type, destination_id, environment_id, postgres_conf,
+        is_log_drain_enabled, is_include_timestamps, custom_docker_run_options,
+        last_online_at, enable_ssl, ssl_mode,
+        created_at, updated_at
+      )
+      SELECT
+        $1, $2, description, postgres_user, postgres_password, postgres_db,
+        postgres_initdb_args, postgres_host_auth_method, init_scripts,
+        'exited', image, false, NULL, ports_mappings,
+        limits_memory, limits_memory_swap, limits_memory_swappiness,
+        limits_memory_reservation, limits_cpus, limits_cpuset, limits_cpu_shares,
+        destination_type, $3, environment_id, postgres_conf,
+        is_log_drain_enabled, is_include_timestamps, custom_docker_run_options,
+        NOW(), enable_ssl, ssl_mode,
+        NOW(), NOW()
+      FROM standalone_postgresqls WHERE id = $4
+      RETURNING id, uuid, name
+    `, [newUuid, newName, targetDestinationId, source.id]);
+
+    const newDb = insertResult.rows[0];
+    logger.success(`  Created new PostgreSQL: ID ${newDb.id}`);
+
+    // Clone environment variables
+    const envCount = await this.cloneEnvironmentVariables(
+      source.id,
+      newDb.id,
+      'App\\Models\\StandalonePostgresql'
+    );
+    logger.info(`  Cloned ${envCount} environment variables`);
+
+    // Clone persistent volumes
+    const volumesCloned = await this.clonePersistentVolumes(
+      source.id,
+      newDb.id,
+      'App\\Models\\StandalonePostgresql',
+      newUuid,
+      source.uuid
+    );
+    logger.info(`  Cloned ${volumesCloned.length} persistent volumes`);
+
+    return {
+      id: newDb.id,
+      uuid: newUuid,
+      name: newName,
+      sourceId: source.id,
+      sourceUuid: source.uuid,
+      type: 'postgresql',
+      volumes: volumesCloned
+    };
+  }
+
+  // Clone standalone Redis
+  async cloneRedis(sourceUuid, targetServerId, targetDestinationId, options = {}) {
+    const source = await this.getStandaloneDatabase('standalone_redis', sourceUuid);
+    if (!source) {
+      throw new Error(`Redis not found: ${sourceUuid}`);
+    }
+
+    const newUuid = this.db.generateUuid();
+    const newName = options.newName || source.name;
+
+    logger.info(`Cloning Redis: ${source.name} -> ${newName}`);
+    logger.info(`  New UUID: ${newUuid}`);
+
+    const insertResult = await this.db.query(`
+      INSERT INTO standalone_redis (
+        uuid, name, description, redis_conf,
+        status, image, is_public, public_port, ports_mappings,
+        limits_memory, limits_memory_swap, limits_memory_swappiness,
+        limits_memory_reservation, limits_cpus, limits_cpuset, limits_cpu_shares,
+        destination_type, destination_id, environment_id,
+        is_log_drain_enabled, is_include_timestamps, custom_docker_run_options,
+        last_online_at, enable_ssl,
+        created_at, updated_at
+      )
+      SELECT
+        $1, $2, description, redis_conf,
+        'exited', image, false, NULL, ports_mappings,
+        limits_memory, limits_memory_swap, limits_memory_swappiness,
+        limits_memory_reservation, limits_cpus, limits_cpuset, limits_cpu_shares,
+        destination_type, $3, environment_id,
+        is_log_drain_enabled, is_include_timestamps, custom_docker_run_options,
+        NOW(), enable_ssl,
+        NOW(), NOW()
+      FROM standalone_redis WHERE id = $4
+      RETURNING id, uuid, name
+    `, [newUuid, newName, targetDestinationId, source.id]);
+
+    const newDb = insertResult.rows[0];
+    logger.success(`  Created new Redis: ID ${newDb.id}`);
+
+    // Clone environment variables
+    const envCount = await this.cloneEnvironmentVariables(
+      source.id,
+      newDb.id,
+      'App\\Models\\StandaloneRedis'
+    );
+    logger.info(`  Cloned ${envCount} environment variables`);
+
+    // Clone persistent volumes
+    const volumesCloned = await this.clonePersistentVolumes(
+      source.id,
+      newDb.id,
+      'App\\Models\\StandaloneRedis',
+      newUuid,
+      source.uuid
+    );
+    logger.info(`  Cloned ${volumesCloned.length} persistent volumes`);
+
+    return {
+      id: newDb.id,
+      uuid: newUuid,
+      name: newName,
+      sourceId: source.id,
+      sourceUuid: source.uuid,
+      type: 'redis',
+      volumes: volumesCloned
+    };
+  }
+
+  // Get standalone database by UUID
+  async getStandaloneDatabase(table, identifier) {
+    const result = await this.db.query(
+      `SELECT * FROM ${table} WHERE (uuid = $1 OR name = $1) AND deleted_at IS NULL LIMIT 1`,
+      [identifier]
+    );
+    return result.rows[0] || null;
+  }
+
+  // Get volumes for standalone database
+  async getStandaloneDatabaseVolumes(table, uuid) {
+    const db = await this.getStandaloneDatabase(table, uuid);
+    if (!db) return [];
+
+    const resourceType = this.getModelName(table);
+
+    const volumes = await this.db.query(
+      `SELECT * FROM local_persistent_volumes WHERE resource_id = $1 AND resource_type = $2`,
+      [db.id, resourceType]
+    );
+
+    return volumes.rows;
+  }
+
+  // Get Laravel model name from table name
+  getModelName(table) {
+    const mapping = {
+      'standalone_postgresqls': 'App\\Models\\StandalonePostgresql',
+      'standalone_redis': 'App\\Models\\StandaloneRedis',
+      'standalone_mysqls': 'App\\Models\\StandaloneMysql',
+      'standalone_mariadbs': 'App\\Models\\StandaloneMariadb',
+      'standalone_mongodbs': 'App\\Models\\StandaloneMongodb',
+      'standalone_keydbs': 'App\\Models\\StandaloneKeydb',
+      'standalone_dragonflies': 'App\\Models\\StandaloneDragonfly',
+      'standalone_clickhouses': 'App\\Models\\StandaloneClickhouse'
+    };
+    return mapping[table] || table;
+  }
+
+  // Clone MySQL
+  async cloneMysql(sourceUuid, targetServerId, targetDestinationId, options = {}) {
+    const source = await this.getStandaloneDatabase('standalone_mysqls', sourceUuid);
+    if (!source) throw new Error(`MySQL not found: ${sourceUuid}`);
+
+    const newUuid = this.db.generateUuid();
+    const newName = options.newName || source.name;
+
+    logger.info(`Cloning MySQL: ${source.name} -> ${newName}`);
+    logger.info(`  New UUID: ${newUuid}`);
+
+    const insertResult = await this.db.query(`
+      INSERT INTO standalone_mysqls (
+        uuid, name, description, mysql_root_password, mysql_user, mysql_password,
+        mysql_database, mysql_conf, status, image, is_public, public_port, ports_mappings,
+        limits_memory, limits_memory_swap, limits_memory_swappiness,
+        limits_memory_reservation, limits_cpus, limits_cpuset, limits_cpu_shares,
+        destination_type, destination_id, environment_id,
+        is_log_drain_enabled, is_include_timestamps, custom_docker_run_options,
+        last_online_at, enable_ssl, ssl_mode, created_at, updated_at
+      )
+      SELECT
+        $1, $2, description, mysql_root_password, mysql_user, mysql_password,
+        mysql_database, mysql_conf, 'exited', image, false, NULL, ports_mappings,
+        limits_memory, limits_memory_swap, limits_memory_swappiness,
+        limits_memory_reservation, limits_cpus, limits_cpuset, limits_cpu_shares,
+        destination_type, $3, environment_id,
+        is_log_drain_enabled, is_include_timestamps, custom_docker_run_options,
+        NOW(), enable_ssl, ssl_mode, NOW(), NOW()
+      FROM standalone_mysqls WHERE id = $4
+      RETURNING id, uuid, name
+    `, [newUuid, newName, targetDestinationId, source.id]);
+
+    const newDb = insertResult.rows[0];
+    logger.success(`  Created new MySQL: ID ${newDb.id}`);
+
+    const envCount = await this.cloneEnvironmentVariables(source.id, newDb.id, 'App\\Models\\StandaloneMysql');
+    logger.info(`  Cloned ${envCount} environment variables`);
+
+    const volumesCloned = await this.clonePersistentVolumes(source.id, newDb.id, 'App\\Models\\StandaloneMysql', newUuid, source.uuid);
+    logger.info(`  Cloned ${volumesCloned.length} persistent volumes`);
+
+    return { id: newDb.id, uuid: newUuid, name: newName, sourceId: source.id, sourceUuid: source.uuid, type: 'mysql', volumes: volumesCloned };
+  }
+
+  // Clone MariaDB
+  async cloneMariadb(sourceUuid, targetServerId, targetDestinationId, options = {}) {
+    const source = await this.getStandaloneDatabase('standalone_mariadbs', sourceUuid);
+    if (!source) throw new Error(`MariaDB not found: ${sourceUuid}`);
+
+    const newUuid = this.db.generateUuid();
+    const newName = options.newName || source.name;
+
+    logger.info(`Cloning MariaDB: ${source.name} -> ${newName}`);
+    logger.info(`  New UUID: ${newUuid}`);
+
+    const insertResult = await this.db.query(`
+      INSERT INTO standalone_mariadbs (
+        uuid, name, description, mariadb_root_password, mariadb_user, mariadb_password,
+        mariadb_database, mariadb_conf, status, image, is_public, public_port, ports_mappings,
+        limits_memory, limits_memory_swap, limits_memory_swappiness,
+        limits_memory_reservation, limits_cpus, limits_cpuset, limits_cpu_shares,
+        destination_type, destination_id, environment_id,
+        is_log_drain_enabled, custom_docker_run_options,
+        last_online_at, enable_ssl, created_at, updated_at
+      )
+      SELECT
+        $1, $2, description, mariadb_root_password, mariadb_user, mariadb_password,
+        mariadb_database, mariadb_conf, 'exited', image, false, NULL, ports_mappings,
+        limits_memory, limits_memory_swap, limits_memory_swappiness,
+        limits_memory_reservation, limits_cpus, limits_cpuset, limits_cpu_shares,
+        destination_type, $3, environment_id,
+        is_log_drain_enabled, custom_docker_run_options,
+        NOW(), enable_ssl, NOW(), NOW()
+      FROM standalone_mariadbs WHERE id = $4
+      RETURNING id, uuid, name
+    `, [newUuid, newName, targetDestinationId, source.id]);
+
+    const newDb = insertResult.rows[0];
+    logger.success(`  Created new MariaDB: ID ${newDb.id}`);
+
+    const envCount = await this.cloneEnvironmentVariables(source.id, newDb.id, 'App\\Models\\StandaloneMariadb');
+    logger.info(`  Cloned ${envCount} environment variables`);
+
+    const volumesCloned = await this.clonePersistentVolumes(source.id, newDb.id, 'App\\Models\\StandaloneMariadb', newUuid, source.uuid);
+    logger.info(`  Cloned ${volumesCloned.length} persistent volumes`);
+
+    return { id: newDb.id, uuid: newUuid, name: newName, sourceId: source.id, sourceUuid: source.uuid, type: 'mariadb', volumes: volumesCloned };
+  }
+
+  // Clone MongoDB
+  async cloneMongodb(sourceUuid, targetServerId, targetDestinationId, options = {}) {
+    const source = await this.getStandaloneDatabase('standalone_mongodbs', sourceUuid);
+    if (!source) throw new Error(`MongoDB not found: ${sourceUuid}`);
+
+    const newUuid = this.db.generateUuid();
+    const newName = options.newName || source.name;
+
+    logger.info(`Cloning MongoDB: ${source.name} -> ${newName}`);
+    logger.info(`  New UUID: ${newUuid}`);
+
+    const insertResult = await this.db.query(`
+      INSERT INTO standalone_mongodbs (
+        uuid, name, description, mongo_conf, mongo_initdb_root_username, mongo_initdb_root_password,
+        mongo_initdb_database, status, image, is_public, public_port, ports_mappings,
+        limits_memory, limits_memory_swap, limits_memory_swappiness,
+        limits_memory_reservation, limits_cpus, limits_cpuset, limits_cpu_shares,
+        destination_type, destination_id, environment_id,
+        is_log_drain_enabled, is_include_timestamps, custom_docker_run_options,
+        last_online_at, enable_ssl, ssl_mode, created_at, updated_at
+      )
+      SELECT
+        $1, $2, description, mongo_conf, mongo_initdb_root_username, mongo_initdb_root_password,
+        mongo_initdb_database, 'exited', image, false, NULL, ports_mappings,
+        limits_memory, limits_memory_swap, limits_memory_swappiness,
+        limits_memory_reservation, limits_cpus, limits_cpuset, limits_cpu_shares,
+        destination_type, $3, environment_id,
+        is_log_drain_enabled, is_include_timestamps, custom_docker_run_options,
+        NOW(), enable_ssl, ssl_mode, NOW(), NOW()
+      FROM standalone_mongodbs WHERE id = $4
+      RETURNING id, uuid, name
+    `, [newUuid, newName, targetDestinationId, source.id]);
+
+    const newDb = insertResult.rows[0];
+    logger.success(`  Created new MongoDB: ID ${newDb.id}`);
+
+    const envCount = await this.cloneEnvironmentVariables(source.id, newDb.id, 'App\\Models\\StandaloneMongodb');
+    logger.info(`  Cloned ${envCount} environment variables`);
+
+    const volumesCloned = await this.clonePersistentVolumes(source.id, newDb.id, 'App\\Models\\StandaloneMongodb', newUuid, source.uuid);
+    logger.info(`  Cloned ${volumesCloned.length} persistent volumes`);
+
+    return { id: newDb.id, uuid: newUuid, name: newName, sourceId: source.id, sourceUuid: source.uuid, type: 'mongodb', volumes: volumesCloned };
+  }
+
+  // Clone KeyDB
+  async cloneKeydb(sourceUuid, targetServerId, targetDestinationId, options = {}) {
+    const source = await this.getStandaloneDatabase('standalone_keydbs', sourceUuid);
+    if (!source) throw new Error(`KeyDB not found: ${sourceUuid}`);
+
+    const newUuid = this.db.generateUuid();
+    const newName = options.newName || source.name;
+
+    logger.info(`Cloning KeyDB: ${source.name} -> ${newName}`);
+    logger.info(`  New UUID: ${newUuid}`);
+
+    const insertResult = await this.db.query(`
+      INSERT INTO standalone_keydbs (
+        uuid, name, description, keydb_password, keydb_conf,
+        status, image, is_public, public_port, ports_mappings,
+        limits_memory, limits_memory_swap, limits_memory_swappiness,
+        limits_memory_reservation, limits_cpus, limits_cpuset, limits_cpu_shares,
+        destination_type, destination_id, environment_id,
+        is_log_drain_enabled, is_include_timestamps, custom_docker_run_options,
+        last_online_at, enable_ssl, created_at, updated_at
+      )
+      SELECT
+        $1, $2, description, keydb_password, keydb_conf,
+        'exited', image, false, NULL, ports_mappings,
+        limits_memory, limits_memory_swap, limits_memory_swappiness,
+        limits_memory_reservation, limits_cpus, limits_cpuset, limits_cpu_shares,
+        destination_type, $3, environment_id,
+        is_log_drain_enabled, is_include_timestamps, custom_docker_run_options,
+        NOW(), enable_ssl, NOW(), NOW()
+      FROM standalone_keydbs WHERE id = $4
+      RETURNING id, uuid, name
+    `, [newUuid, newName, targetDestinationId, source.id]);
+
+    const newDb = insertResult.rows[0];
+    logger.success(`  Created new KeyDB: ID ${newDb.id}`);
+
+    const envCount = await this.cloneEnvironmentVariables(source.id, newDb.id, 'App\\Models\\StandaloneKeydb');
+    logger.info(`  Cloned ${envCount} environment variables`);
+
+    const volumesCloned = await this.clonePersistentVolumes(source.id, newDb.id, 'App\\Models\\StandaloneKeydb', newUuid, source.uuid);
+    logger.info(`  Cloned ${volumesCloned.length} persistent volumes`);
+
+    return { id: newDb.id, uuid: newUuid, name: newName, sourceId: source.id, sourceUuid: source.uuid, type: 'keydb', volumes: volumesCloned };
+  }
+
+  // Clone Dragonfly
+  async cloneDragonfly(sourceUuid, targetServerId, targetDestinationId, options = {}) {
+    const source = await this.getStandaloneDatabase('standalone_dragonflies', sourceUuid);
+    if (!source) throw new Error(`Dragonfly not found: ${sourceUuid}`);
+
+    const newUuid = this.db.generateUuid();
+    const newName = options.newName || source.name;
+
+    logger.info(`Cloning Dragonfly: ${source.name} -> ${newName}`);
+    logger.info(`  New UUID: ${newUuid}`);
+
+    const insertResult = await this.db.query(`
+      INSERT INTO standalone_dragonflies (
+        uuid, name, description, dragonfly_password,
+        status, image, is_public, public_port, ports_mappings,
+        limits_memory, limits_memory_swap, limits_memory_swappiness,
+        limits_memory_reservation, limits_cpus, limits_cpuset, limits_cpu_shares,
+        destination_type, destination_id, environment_id,
+        is_log_drain_enabled, is_include_timestamps, custom_docker_run_options,
+        last_online_at, enable_ssl, created_at, updated_at
+      )
+      SELECT
+        $1, $2, description, dragonfly_password,
+        'exited', image, false, NULL, ports_mappings,
+        limits_memory, limits_memory_swap, limits_memory_swappiness,
+        limits_memory_reservation, limits_cpus, limits_cpuset, limits_cpu_shares,
+        destination_type, $3, environment_id,
+        is_log_drain_enabled, is_include_timestamps, custom_docker_run_options,
+        NOW(), enable_ssl, NOW(), NOW()
+      FROM standalone_dragonflies WHERE id = $4
+      RETURNING id, uuid, name
+    `, [newUuid, newName, targetDestinationId, source.id]);
+
+    const newDb = insertResult.rows[0];
+    logger.success(`  Created new Dragonfly: ID ${newDb.id}`);
+
+    const envCount = await this.cloneEnvironmentVariables(source.id, newDb.id, 'App\\Models\\StandaloneDragonfly');
+    logger.info(`  Cloned ${envCount} environment variables`);
+
+    const volumesCloned = await this.clonePersistentVolumes(source.id, newDb.id, 'App\\Models\\StandaloneDragonfly', newUuid, source.uuid);
+    logger.info(`  Cloned ${volumesCloned.length} persistent volumes`);
+
+    return { id: newDb.id, uuid: newUuid, name: newName, sourceId: source.id, sourceUuid: source.uuid, type: 'dragonfly', volumes: volumesCloned };
+  }
+
+  // Clone ClickHouse
+  async cloneClickhouse(sourceUuid, targetServerId, targetDestinationId, options = {}) {
+    const source = await this.getStandaloneDatabase('standalone_clickhouses', sourceUuid);
+    if (!source) throw new Error(`ClickHouse not found: ${sourceUuid}`);
+
+    const newUuid = this.db.generateUuid();
+    const newName = options.newName || source.name;
+
+    logger.info(`Cloning ClickHouse: ${source.name} -> ${newName}`);
+    logger.info(`  New UUID: ${newUuid}`);
+
+    const insertResult = await this.db.query(`
+      INSERT INTO standalone_clickhouses (
+        uuid, name, description, clickhouse_admin_user, clickhouse_admin_password, clickhouse_db,
+        status, image, is_public, public_port, ports_mappings,
+        limits_memory, limits_memory_swap, limits_memory_swappiness,
+        limits_memory_reservation, limits_cpus, limits_cpuset, limits_cpu_shares,
+        destination_type, destination_id, environment_id,
+        is_log_drain_enabled, is_include_timestamps, custom_docker_run_options,
+        last_online_at, created_at, updated_at
+      )
+      SELECT
+        $1, $2, description, clickhouse_admin_user, clickhouse_admin_password, clickhouse_db,
+        'exited', image, false, NULL, ports_mappings,
+        limits_memory, limits_memory_swap, limits_memory_swappiness,
+        limits_memory_reservation, limits_cpus, limits_cpuset, limits_cpu_shares,
+        destination_type, $3, environment_id,
+        is_log_drain_enabled, is_include_timestamps, custom_docker_run_options,
+        NOW(), NOW(), NOW()
+      FROM standalone_clickhouses WHERE id = $4
+      RETURNING id, uuid, name
+    `, [newUuid, newName, targetDestinationId, source.id]);
+
+    const newDb = insertResult.rows[0];
+    logger.success(`  Created new ClickHouse: ID ${newDb.id}`);
+
+    const envCount = await this.cloneEnvironmentVariables(source.id, newDb.id, 'App\\Models\\StandaloneClickhouse');
+    logger.info(`  Cloned ${envCount} environment variables`);
+
+    const volumesCloned = await this.clonePersistentVolumes(source.id, newDb.id, 'App\\Models\\StandaloneClickhouse', newUuid, source.uuid);
+    logger.info(`  Cloned ${volumesCloned.length} persistent volumes`);
+
+    return { id: newDb.id, uuid: newUuid, name: newName, sourceId: source.id, sourceUuid: source.uuid, type: 'clickhouse', volumes: volumesCloned };
+  }
+
   // Get all volumes for a service (including sub-applications and databases)
   async getServiceVolumes(serviceUuid) {
     const service = await this.getService(serviceUuid);
@@ -334,6 +783,33 @@ class ResourceCloner {
     }
 
     return volumes;
+  }
+
+  // Rename a resource (add -old suffix)
+  async renameResource(type, id, newName) {
+    const tableMapping = {
+      'service': 'services',
+      'postgresql': 'standalone_postgresqls',
+      'redis': 'standalone_redis',
+      'mysql': 'standalone_mysqls',
+      'mariadb': 'standalone_mariadbs',
+      'mongodb': 'standalone_mongodbs',
+      'keydb': 'standalone_keydbs',
+      'dragonfly': 'standalone_dragonflies',
+      'clickhouse': 'standalone_clickhouses'
+    };
+
+    const table = tableMapping[type];
+    if (!table) {
+      throw new Error(`Unknown resource type: ${type}`);
+    }
+
+    await this.db.query(
+      `UPDATE ${table} SET name = $1, updated_at = NOW() WHERE id = $2`,
+      [newName, id]
+    );
+
+    logger.info(`  Renamed old resource to: ${newName}`);
   }
 }
 

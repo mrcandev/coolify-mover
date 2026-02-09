@@ -6,7 +6,7 @@ const { getConfig } = require('../utils/config');
 const logger = require('../utils/logger');
 
 async function moveResource(options) {
-  const { resource, from, to, dryRun, skipSpaceCheck, stopSource } = options;
+  const { resource, from, to, dryRun, skipSpaceCheck, stopSource, resourceType } = options;
   const config = getConfig();
 
   const api = new CoolifyAPI(config.apiUrl, config.apiToken);
@@ -37,17 +37,52 @@ async function moveResource(options) {
     await cloner.connect();
     logger.success('Connected to database');
 
-    // 3. Get resource info from database
+    // 3. Get resource info from database (detect type)
     logger.step('Fetching resource information...');
-    const serviceInfo = await cloner.getService(resource);
 
-    if (!serviceInfo) {
-      throw new Error(`Service not found: ${resource}`);
+    let resourceInfo = null;
+    let detectedType = resourceType || null;
+    let volumes = [];
+
+    // Try to find resource in different tables
+    if (!detectedType || detectedType === 'service') {
+      resourceInfo = await cloner.getService(resource);
+      if (resourceInfo) {
+        detectedType = 'service';
+        volumes = await cloner.getServiceVolumes(resourceInfo.uuid);
+      }
     }
 
-    logger.info(`  Service: ${serviceInfo.name}`);
-    logger.info(`  UUID: ${serviceInfo.uuid}`);
-    logger.info(`  Type: ${serviceInfo.service_type || 'docker-compose'}`);
+    // Database types to check
+    const dbTypes = [
+      { table: 'standalone_postgresqls', type: 'postgresql' },
+      { table: 'standalone_redis', type: 'redis' },
+      { table: 'standalone_mysqls', type: 'mysql' },
+      { table: 'standalone_mariadbs', type: 'mariadb' },
+      { table: 'standalone_mongodbs', type: 'mongodb' },
+      { table: 'standalone_keydbs', type: 'keydb' },
+      { table: 'standalone_dragonflies', type: 'dragonfly' },
+      { table: 'standalone_clickhouses', type: 'clickhouse' }
+    ];
+
+    for (const db of dbTypes) {
+      if (!resourceInfo && (!detectedType || detectedType === 'database')) {
+        resourceInfo = await cloner.getStandaloneDatabase(db.table, resource);
+        if (resourceInfo) {
+          detectedType = db.type;
+          volumes = await cloner.getStandaloneDatabaseVolumes(db.table, resource);
+          break;
+        }
+      }
+    }
+
+    if (!resourceInfo) {
+      throw new Error(`Resource not found: ${resource}`);
+    }
+
+    logger.info(`  Name: ${resourceInfo.name}`);
+    logger.info(`  UUID: ${resourceInfo.uuid}`);
+    logger.info(`  Type: ${detectedType}`);
 
     // 4. Connect to servers via SSH
     logger.step('Connecting to servers...');
@@ -55,21 +90,19 @@ async function moveResource(options) {
     await ssh.connect(targetServer);
     logger.success('Connected to both servers');
 
-    // 5. Get volume information from database
+    // 5. Get volume information
     logger.step('Analyzing volumes...');
-    const volumes = await cloner.getServiceVolumes(serviceInfo.uuid);
 
     let totalVolumeSize = 0;
     if (volumes.length === 0) {
-      logger.warn('No volumes found for this service');
+      logger.warn('No volumes found for this resource');
     } else {
       logger.info(`  Found ${volumes.length} volume(s)`);
       for (const vol of volumes) {
         const size = await ssh.getVolumeSize(sourceServer.name, vol.name);
         const sizeBytes = await ssh.getVolumeSizeBytes(sourceServer.name, vol.name);
         totalVolumeSize += sizeBytes;
-        const sourceLabel = vol.source === 'service' ? '' : ` (${vol.appName || vol.dbName})`;
-        logger.info(`    - ${vol.name} (${size})${sourceLabel}`);
+        logger.info(`    - ${vol.name} (${size})`);
       }
     }
 
@@ -96,14 +129,18 @@ async function moveResource(options) {
       logger.warn('Skipping disk space check (--skip-space-check)');
     }
 
-    // 7. Stop source service if requested
+    // 7. Stop source resource if requested
     if (stopSource && !dryRun) {
-      logger.step('Stopping source service...');
+      logger.step('Stopping source resource...');
       try {
-        await api.stopService(serviceInfo.uuid);
-        logger.success('Source service stopped');
+        if (detectedType === 'service') {
+          await api.stopService(resourceInfo.uuid);
+        } else {
+          await api.stopDatabase(resourceInfo.uuid);
+        }
+        logger.success('Source resource stopped');
       } catch (err) {
-        logger.warn(`Could not stop service via API: ${err.message}`);
+        logger.warn(`Could not stop resource via API: ${err.message}`);
         logger.info('  You may need to stop it manually from Coolify dashboard');
       }
     }
@@ -118,12 +155,27 @@ async function moveResource(options) {
         throw new Error(`No Docker destination found on target server: ${targetServer.name}`);
       }
 
-      const clonedResource = await cloner.cloneService(
-        serviceInfo.uuid,
-        targetServer.id,
-        targetDestination.id,
-        { newName: serviceInfo.name }
-      );
+      let clonedResource;
+      const cloneOptions = { newName: resourceInfo.name };
+
+      // Clone based on detected type
+      const cloneMethods = {
+        'service': () => cloner.cloneService(resourceInfo.uuid, targetServer.id, targetDestination.id, cloneOptions),
+        'postgresql': () => cloner.clonePostgresql(resourceInfo.uuid, targetServer.id, targetDestination.id, cloneOptions),
+        'redis': () => cloner.cloneRedis(resourceInfo.uuid, targetServer.id, targetDestination.id, cloneOptions),
+        'mysql': () => cloner.cloneMysql(resourceInfo.uuid, targetServer.id, targetDestination.id, cloneOptions),
+        'mariadb': () => cloner.cloneMariadb(resourceInfo.uuid, targetServer.id, targetDestination.id, cloneOptions),
+        'mongodb': () => cloner.cloneMongodb(resourceInfo.uuid, targetServer.id, targetDestination.id, cloneOptions),
+        'keydb': () => cloner.cloneKeydb(resourceInfo.uuid, targetServer.id, targetDestination.id, cloneOptions),
+        'dragonfly': () => cloner.cloneDragonfly(resourceInfo.uuid, targetServer.id, targetDestination.id, cloneOptions),
+        'clickhouse': () => cloner.cloneClickhouse(resourceInfo.uuid, targetServer.id, targetDestination.id, cloneOptions)
+      };
+
+      if (cloneMethods[detectedType]) {
+        clonedResource = await cloneMethods[detectedType]();
+      } else {
+        throw new Error(`Unsupported resource type: ${detectedType}`);
+      }
 
       logger.success(`Cloned resource: ${clonedResource.uuid}`);
 
@@ -131,26 +183,9 @@ async function moveResource(options) {
       if (volumes.length > 0) {
         logger.step('Transferring volume data...');
 
-        // Build volume mapping (old uuid -> new uuid)
-        const volumeMapping = new Map();
-        volumeMapping.set(serviceInfo.uuid, clonedResource.uuid);
-
-        for (const app of clonedResource.applications) {
-          volumeMapping.set(app.sourceUuid, app.uuid);
-        }
-        for (const db of clonedResource.databases) {
-          volumeMapping.set(db.sourceUuid, db.uuid);
-        }
-
         for (const vol of volumes) {
-          // Find the new volume name by replacing old UUID with new UUID
-          let targetVolumeName = vol.name;
-          for (const [oldUuid, newUuid] of volumeMapping) {
-            if (vol.name.includes(oldUuid)) {
-              targetVolumeName = vol.name.replace(oldUuid, newUuid);
-              break;
-            }
-          }
+          // Replace old UUID with new UUID in volume name
+          const targetVolumeName = vol.name.replace(resourceInfo.uuid, clonedResource.uuid);
 
           logger.info(`  Transferring: ${vol.name} -> ${targetVolumeName}`);
 
@@ -169,12 +204,22 @@ async function moveResource(options) {
         }
       }
 
+      // 10. Rename old resource to -old
+      logger.step('Renaming old resource...');
+      const oldName = `${resourceInfo.name}-old`;
+      await cloner.renameResource(detectedType, resourceInfo.id, oldName);
+
       logger.success('Migration completed!');
-      logger.info('\nNext steps:');
+      logger.info('');
+      logger.warn('IMPORTANT: Please verify the new resource works correctly!');
+      logger.info('');
+      logger.info('Next steps:');
       logger.info('  1. Go to Coolify dashboard');
-      logger.info(`  2. Deploy the new service: ${clonedResource.name}`);
-      logger.info('  3. Verify it works correctly');
-      logger.info(`  4. Stop and delete the old service: ${serviceInfo.name}`);
+      logger.info(`  2. Deploy the new resource: ${clonedResource.name}`);
+      logger.info('  3. Test and verify everything works correctly');
+      logger.info(`  4. If OK, stop and delete the old resource: ${oldName}`);
+      logger.info('');
+      logger.warn(`Old resource renamed to "${oldName}" - data preserved until you delete it`);
 
     } else {
       logger.info('\nDRY RUN - No changes made');

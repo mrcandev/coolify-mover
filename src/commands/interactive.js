@@ -39,6 +39,18 @@ async function interactiveMove() {
 
     let resources = [];
 
+    // Get databases
+    const databases = await api.getDatabases();
+    const serverDatabases = databases.filter(d =>
+      d.server?.name === sourceServer || d.server_id === sourceServerData.id
+    );
+    resources.push(...serverDatabases.map(d => ({
+      name: `${d.name} (${d.type || 'database'})`,
+      value: d.uuid,
+      type: d.type || 'database',
+      resourceType: 'database'
+    })));
+
     // Get services
     const services = await api.getServices();
     const serverServices = services.filter(s =>
@@ -46,8 +58,9 @@ async function interactiveMove() {
     );
     resources.push(...serverServices.map(s => ({
       name: `${s.name} (service)`,
-      value: s.name,
-      type: 'service'
+      value: s.uuid,
+      type: 'service',
+      resourceType: 'service'
     })));
 
     // Get applications
@@ -57,8 +70,9 @@ async function interactiveMove() {
     );
     resources.push(...serverApps.map(a => ({
       name: `${a.name} (application)`,
-      value: a.name,
-      type: 'application'
+      value: a.uuid,
+      type: 'application',
+      resourceType: 'application'
     })));
 
     if (resources.length === 0) {
@@ -67,14 +81,16 @@ async function interactiveMove() {
     }
 
     // 4. Select resource
-    const { resource } = await inquirer.prompt([
+    const { resourceUuid } = await inquirer.prompt([
       {
         type: 'list',
-        name: 'resource',
+        name: 'resourceUuid',
         message: 'Select resource to move:',
         choices: resources
       }
     ]);
+
+    const selectedResource = resources.find(r => r.value === resourceUuid);
 
     // 5. Select target server
     const targetChoices = serverChoices.filter(s => s.value !== sourceServer);
@@ -100,7 +116,7 @@ async function interactiveMove() {
         name: 'options',
         message: 'Options:',
         choices: [
-          { name: 'Stop source service before migration (recommended for databases)', value: 'stopSource' },
+          { name: 'Stop source before migration (recommended for databases)', value: 'stopSource', checked: selectedResource.resourceType === 'database' },
           { name: 'Skip disk space check', value: 'skipSpaceCheck' },
           { name: 'Dry run (don\'t make changes)', value: 'dryRun' }
         ]
@@ -110,7 +126,8 @@ async function interactiveMove() {
     // 7. Confirm
     console.log('');
     console.log('Migration summary:');
-    console.log(`  Resource:      ${resource}`);
+    console.log(`  Resource:      ${selectedResource.name}`);
+    console.log(`  Type:          ${selectedResource.resourceType}`);
     console.log(`  From:          ${sourceServer}`);
     console.log(`  To:            ${targetServer}`);
     console.log(`  Stop source:   ${options.includes('stopSource') ? 'Yes' : 'No'}`);
@@ -134,12 +151,13 @@ async function interactiveMove() {
     // 8. Run migration
     console.log('');
     await moveResource({
-      resource,
+      resource: resourceUuid,
       from: sourceServer,
       to: targetServer,
       dryRun: options.includes('dryRun'),
       stopSource: options.includes('stopSource'),
-      skipSpaceCheck: options.includes('skipSpaceCheck')
+      skipSpaceCheck: options.includes('skipSpaceCheck'),
+      resourceType: selectedResource.resourceType
     });
 
   } catch (error) {

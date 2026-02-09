@@ -21,14 +21,16 @@ async function listResources(options) {
 
     // Get all resources
     logger.step('Fetching resources...');
-    const [services, applications] = await Promise.all([
+    const [services, applications, databases] = await Promise.all([
       api.getServices(),
-      api.getApplications()
+      api.getApplications(),
+      api.getDatabases()
     ]);
 
     // Filter by server if specified
     let filteredServices = services;
     let filteredApps = applications;
+    let filteredDbs = databases;
 
     if (server) {
       const targetServer = servers.find(s => s.name === server || s.uuid === server);
@@ -38,6 +40,7 @@ async function listResources(options) {
 
       filteredServices = services.filter(s => s.server_id === targetServer.id);
       filteredApps = applications.filter(a => a.server_id === targetServer.id);
+      filteredDbs = databases.filter(d => d.server_id === targetServer.id);
     }
 
     // Display results
@@ -51,6 +54,24 @@ async function listResources(options) {
       console.log(`    IP: ${s.ip}`);
       console.log(`    UUID: ${s.uuid}`);
       console.log('');
+    }
+
+    console.log('='.repeat(80));
+    console.log('DATABASES');
+    console.log('='.repeat(80));
+
+    if (filteredDbs.length === 0) {
+      console.log('  No databases found');
+    } else {
+      for (const db of filteredDbs) {
+        const serverInfo = serverMap.get(db.server_id);
+        const dbType = db.type || 'database';
+        console.log(`  ${db.name} (${dbType})`);
+        console.log(`    UUID: ${db.uuid}`);
+        console.log(`    Server: ${serverInfo?.name || 'Unknown'}`);
+        console.log(`    Status: ${db.status || 'unknown'}`);
+        console.log('');
+      }
     }
 
     console.log('='.repeat(80));
@@ -104,7 +125,7 @@ async function listResources(options) {
     }
 
     console.log('='.repeat(80));
-    console.log(`Total: ${filteredServices.length} services, ${filteredApps.length} applications`);
+    console.log(`Total: ${filteredDbs.length} databases, ${filteredServices.length} services, ${filteredApps.length} applications`);
     console.log('='.repeat(80) + '\n');
 
   } catch (error) {
