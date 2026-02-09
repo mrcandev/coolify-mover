@@ -33,10 +33,14 @@ class ResourceCloner {
     return result.rows[0] || null;
   }
 
-  // Get server by name or UUID
+  // Get server by name or UUID (with private key UUID for SSH)
   async getServer(identifier) {
     const result = await this.db.query(
-      `SELECT * FROM servers WHERE uuid = $1 OR name = $1 LIMIT 1`,
+      `SELECT s.*, pk.uuid as private_key_uuid
+       FROM servers s
+       LEFT JOIN private_keys pk ON s.private_key_id = pk.id
+       WHERE s.uuid = $1 OR s.name = $1
+       LIMIT 1`,
       [identifier]
     );
     return result.rows[0] || null;
