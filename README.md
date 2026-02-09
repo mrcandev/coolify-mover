@@ -20,7 +20,7 @@ Coolify doesn't have built-in migration ([Issue #5014](https://github.com/coolla
 - Dragonfly
 - ClickHouse
 
-**Applications:** Not yet supported (coming soon)
+**Applications:** Dockerfile, Nixpacks, Docker Compose apps
 
 ## Install
 

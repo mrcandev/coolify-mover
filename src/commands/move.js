@@ -53,6 +53,15 @@ async function moveResource(options) {
       }
     }
 
+    // Check applications
+    if (!resourceInfo && (!detectedType || detectedType === 'application')) {
+      resourceInfo = await cloner.getApplication(resource);
+      if (resourceInfo) {
+        detectedType = 'application';
+        volumes = await cloner.getApplicationVolumes(resourceInfo.id);
+      }
+    }
+
     // Database types to check
     const dbTypes = [
       { table: 'standalone_postgresqls', type: 'postgresql' },
@@ -167,6 +176,7 @@ async function moveResource(options) {
       // Clone based on detected type
       const cloneMethods = {
         'service': () => cloner.cloneService(resourceInfo.uuid, targetServer.id, targetDestination.id, cloneOptions),
+        'application': () => cloner.cloneApplication(resourceInfo.uuid, targetServer.id, targetDestination.id, cloneOptions),
         'postgresql': () => cloner.clonePostgresql(resourceInfo.uuid, targetServer.id, targetDestination.id, cloneOptions),
         'redis': () => cloner.cloneRedis(resourceInfo.uuid, targetServer.id, targetDestination.id, cloneOptions),
         'mysql': () => cloner.cloneMysql(resourceInfo.uuid, targetServer.id, targetDestination.id, cloneOptions),

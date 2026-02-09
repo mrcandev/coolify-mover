@@ -47,6 +47,8 @@ async function runPreflightChecks(config, sourceServerName, targetServerName, re
 
     if (resourceType === 'service') {
       resourceInfo = await cloner.getService(resourceUuid);
+    } else if (resourceType === 'application') {
+      resourceInfo = await cloner.getApplication(resourceUuid);
     } else {
       const dbTypes = [
         { table: 'standalone_postgresqls', type: 'postgresql' },

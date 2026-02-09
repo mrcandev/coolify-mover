@@ -786,10 +786,100 @@ class ResourceCloner {
     return volumes;
   }
 
+  // Get application by name or UUID
+  async getApplication(nameOrUuid) {
+    const result = await this.db.query(
+      `SELECT * FROM applications WHERE (uuid = $1 OR name = $1) AND deleted_at IS NULL LIMIT 1`,
+      [nameOrUuid]
+    );
+    return result.rows[0] || null;
+  }
+
+  // Get volumes for an application
+  async getApplicationVolumes(applicationId) {
+    const result = await this.db.query(
+      `SELECT * FROM local_persistent_volumes WHERE resource_id = $1 AND resource_type = 'App\\Models\\Application'`,
+      [applicationId]
+    );
+    return result.rows;
+  }
+
+  // Clone an application to a new destination
+  async cloneApplication(sourceUuid, targetServerId, targetDestinationId, options = {}) {
+    const source = await this.getApplication(sourceUuid);
+    if (!source) throw new Error(`Application not found: ${sourceUuid}`);
+
+    const newUuid = this.db.generateUuid();
+    const newName = options.newName || source.name;
+
+    logger.info(`Cloning Application: ${source.name} -> ${newName}`);
+    logger.info(`  New UUID: ${newUuid}`);
+
+    const insertResult = await this.db.query(`
+      INSERT INTO applications (
+        uuid, name, description, fqdn, git_repository, git_branch, git_commit_sha, git_full_url,
+        docker_registry_image_name, docker_registry_image_tag, build_pack, static_image,
+        install_command, build_command, start_command, ports_exposes, ports_mappings,
+        base_directory, publish_directory, health_check_path, health_check_port,
+        health_check_host, health_check_method, health_check_return_code, health_check_scheme,
+        health_check_response_text, health_check_interval, health_check_timeout,
+        health_check_retries, health_check_start_period, health_check_enabled,
+        limits_memory, limits_memory_swap, limits_memory_swappiness,
+        limits_memory_reservation, limits_cpus, limits_cpuset, limits_cpu_shares,
+        status, destination_type, destination_id, source_type, source_id,
+        private_key_id, environment_id, dockerfile, dockerfile_location, dockerfile_target_build,
+        custom_labels, docker_compose_location, docker_compose, docker_compose_raw,
+        docker_compose_domains, docker_compose_custom_start_command, docker_compose_custom_build_command,
+        swarm_replicas, swarm_placement_constraints, custom_docker_run_options,
+        post_deployment_command, post_deployment_command_container,
+        pre_deployment_command, pre_deployment_command_container,
+        watch_paths, custom_healthcheck_found, redirect, compose_parsing_version,
+        custom_nginx_configuration, custom_network_aliases,
+        preview_url_template, last_online_at, created_at, updated_at
+      )
+      SELECT
+        $1, $2, description, fqdn, git_repository, git_branch, git_commit_sha, git_full_url,
+        docker_registry_image_name, docker_registry_image_tag, build_pack, static_image,
+        install_command, build_command, start_command, ports_exposes, ports_mappings,
+        base_directory, publish_directory, health_check_path, health_check_port,
+        health_check_host, health_check_method, health_check_return_code, health_check_scheme,
+        health_check_response_text, health_check_interval, health_check_timeout,
+        health_check_retries, health_check_start_period, health_check_enabled,
+        limits_memory, limits_memory_swap, limits_memory_swappiness,
+        limits_memory_reservation, limits_cpus, limits_cpuset, limits_cpu_shares,
+        'exited', destination_type, $3, source_type, source_id,
+        private_key_id, environment_id, dockerfile, dockerfile_location, dockerfile_target_build,
+        custom_labels, docker_compose_location, docker_compose, docker_compose_raw,
+        docker_compose_domains, docker_compose_custom_start_command, docker_compose_custom_build_command,
+        swarm_replicas, swarm_placement_constraints, custom_docker_run_options,
+        post_deployment_command, post_deployment_command_container,
+        pre_deployment_command, pre_deployment_command_container,
+        watch_paths, custom_healthcheck_found, redirect, compose_parsing_version,
+        custom_nginx_configuration, custom_network_aliases,
+        preview_url_template, NOW(), NOW(), NOW()
+      FROM applications WHERE id = $4
+      RETURNING id, uuid, name
+    `, [newUuid, newName, targetDestinationId, source.id]);
+
+    const newApp = insertResult.rows[0];
+    logger.success(`  Created new Application: ID ${newApp.id}`);
+
+    // Clone environment variables
+    const envCount = await this.cloneEnvironmentVariables(source.id, newApp.id, 'App\\Models\\Application');
+    logger.info(`  Cloned ${envCount} environment variables`);
+
+    // Clone persistent volumes
+    const volumesCloned = await this.clonePersistentVolumes(source.id, newApp.id, 'App\\Models\\Application', newUuid, source.uuid);
+    logger.info(`  Cloned ${volumesCloned.length} persistent volumes`);
+
+    return { id: newApp.id, uuid: newUuid, name: newName, sourceId: source.id, sourceUuid: source.uuid, type: 'application', volumes: volumesCloned };
+  }
+
   // Rename a resource (add -old suffix)
   async renameResource(type, id, newName) {
     const tableMapping = {
       'service': 'services',
+      'application': 'applications',
       'postgresql': 'standalone_postgresqls',
       'redis': 'standalone_redis',
       'mysql': 'standalone_mysqls',
