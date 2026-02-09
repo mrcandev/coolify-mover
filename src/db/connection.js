@@ -17,7 +17,7 @@ class CoolifyDB {
   autoDetectPassword() {
     try {
       const result = execSync(
-        'docker exec coolify-db env 2>/dev/null | grep POSTGRES_PASSWORD | cut -d= -f2',
+        'docker exec coolify-db env 2>/dev/null | grep POSTGRES_PASSWORD | sed "s/POSTGRES_PASSWORD=//"',
         { encoding: 'utf8', timeout: 5000 }
       );
       return result.trim() || 'coolify';
