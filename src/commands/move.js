@@ -17,10 +17,15 @@ async function moveResource(options) {
   logger.info(`Moving "${resource}" from "${from}" to "${to}"${dryRun ? ' (DRY RUN)' : ''}`);
 
   try {
-    // 1. Get server info from API
+    // 1. Connect to database first (we need it for server info)
+    logger.step('Connecting to Coolify database...');
+    await cloner.connect();
+    logger.success('Connected to database');
+
+    // 2. Get server info from DATABASE (not API - API doesn't have id and private_key_uuid)
     logger.step('Fetching server information...');
-    const sourceServer = await api.getServer(from);
-    const targetServer = await api.getServer(to);
+    const sourceServer = await cloner.getServer(from);
+    const targetServer = await cloner.getServer(to);
 
     if (!sourceServer) {
       throw new Error(`Source server not found: ${from}`);
@@ -31,11 +36,6 @@ async function moveResource(options) {
 
     logger.info(`  Source: ${sourceServer.name} (${sourceServer.ip})`);
     logger.info(`  Target: ${targetServer.name} (${targetServer.ip})`);
-
-    // 2. Connect to database for clone operation
-    logger.step('Connecting to Coolify database...');
-    await cloner.connect();
-    logger.success('Connected to database');
 
     // 3. Get resource info from database (detect type)
     logger.step('Fetching resource information...');

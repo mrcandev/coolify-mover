@@ -63,8 +63,8 @@ SSH_KEYS_PATH=/data/coolify/ssh/keys
 ```
 
 Get API token:
-1. Coolify Dashboard → Settings → Enable API
-2. Keys & Tokens → API Tokens → Create new token
+1. Coolify Dashboard -> Settings -> Enable API
+2. Keys & Tokens -> API Tokens -> Create new token
 3. Give `read` and `write` permissions (or `root`)
 
 Database password is auto-detected from coolify-db container.
@@ -82,7 +82,35 @@ Step by step:
 2. Select resource to move
 3. Select target server
 4. Choose options (stop source, dry run)
-5. Confirm and migrate
+5. Pre-flight checks run automatically
+6. Confirm and migrate
+
+### Pre-flight Checks
+
+Before migration starts, the tool validates:
+- Database connection (coolify-db)
+- Source server exists in database
+- Target server exists in database
+- Resource exists in database
+- Target server has Docker destination
+- SSH connectivity to both servers
+- rsync is installed on both servers
+
+```
+>> Running pre-flight checks...
+
+  [ OK ] Database connection
+  [ OK ] Source server lookup
+  [ OK ] Target server lookup
+  [ OK ] Resource lookup
+  [ OK ] Target server destination
+  [ OK ] Source server SSH
+  [ OK ] Source server rsync
+  [ OK ] Target server SSH
+  [ OK ] Target server rsync
+
+[OK] All pre-flight checks passed!
+```
 
 ### Command line
 
@@ -132,7 +160,7 @@ coolify-mover batch --config migrations.yaml
 The tool does **not** delete the old resource. It renames it with `-old` suffix.
 
 ```
-venueplus-redis  →  venueplus-redis-old
+venueplus-redis  ->  venueplus-redis-old
 ```
 
 **What you need to do:**
@@ -163,12 +191,14 @@ venueplus-redis  →  venueplus-redis-old
 
 ## How it Works
 
-1. Gets server info from Coolify API
-2. Clones resource in coolify-db (same as Clone button)
-3. Copies environment variables and volume records
-4. Transfers volume data via rsync
-5. Renames old resource with `-old` suffix
-6. New resource appears in Coolify dashboard
+1. Connects to coolify-db via `docker exec`
+2. Gets server info from database
+3. Runs pre-flight checks (SSH, rsync, disk space)
+4. Clones resource in database (same as Clone button)
+5. Copies environment variables and volume records
+6. Transfers volume data via rsync
+7. Renames old resource with `-old` suffix
+8. New resource appears in Coolify dashboard
 
 ## Requirements
 
@@ -208,10 +238,14 @@ coolify-mover list
 **"Resource not found"**
 - Run `coolify-mover list` to see available resources
 
+**Pre-flight check fails**
+- Fix the issue shown in the check output
+- You can continue anyway but migration may fail
+
 ## License
 
 MIT
 
 ## Author
 
-Ömer AYDINOĞLU ([@mrcandev](https://github.com/mrcandev))
+Omer AYDINOGLU ([@mrcandev](https://github.com/mrcandev))

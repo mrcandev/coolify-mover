@@ -6,26 +6,44 @@ const { getConfig } = require('../utils/config');
 const logger = require('../utils/logger');
 const moveResource = require('./move');
 
-async function runPreflightChecks(config, api, sourceServerName, targetServerName, resourceUuid, resourceType) {
-  const checks = [];
+async function runPreflightChecks(config, sourceServerName, targetServerName, resourceUuid, resourceType) {
   let allPassed = true;
+  let cloner = null;
+  let ssh = null;
 
   console.log('');
   logger.step('Running pre-flight checks...');
   console.log('');
 
-  // 1. Database connection
-  process.stdout.write('  [....] Database connection');
   try {
-    const cloner = new ResourceCloner(config.dbConfig);
+    // 1. Database connection
+    process.stdout.write('  [....] Database connection');
+    cloner = new ResourceCloner(config.dbConfig);
     await cloner.connect();
-
-    // 2. Check resource exists
     process.stdout.write('\r  [ OK ] Database connection\n');
-    process.stdout.write('  [....] Resource lookup');
 
+    // 2. Get servers from database (not API - API doesn't have id and private_key_uuid)
+    process.stdout.write('  [....] Source server lookup');
+    const sourceServer = await cloner.getServer(sourceServerName);
+    if (sourceServer) {
+      process.stdout.write('\r  [ OK ] Source server lookup\n');
+    } else {
+      process.stdout.write('\r  [FAIL] Source server lookup - not found in database\n');
+      allPassed = false;
+    }
+
+    process.stdout.write('  [....] Target server lookup');
+    const targetServer = await cloner.getServer(targetServerName);
+    if (targetServer) {
+      process.stdout.write('\r  [ OK ] Target server lookup\n');
+    } else {
+      process.stdout.write('\r  [FAIL] Target server lookup - not found in database\n');
+      allPassed = false;
+    }
+
+    // 3. Check resource exists
+    process.stdout.write('  [....] Resource lookup');
     let resourceInfo = null;
-    let dbTable = null;
 
     if (resourceType === 'service') {
       resourceInfo = await cloner.getService(resourceUuid);
@@ -43,10 +61,7 @@ async function runPreflightChecks(config, api, sourceServerName, targetServerNam
 
       for (const db of dbTypes) {
         resourceInfo = await cloner.getStandaloneDatabase(db.table, resourceUuid);
-        if (resourceInfo) {
-          dbTable = db.table;
-          break;
-        }
+        if (resourceInfo) break;
       }
     }
 
@@ -57,9 +72,8 @@ async function runPreflightChecks(config, api, sourceServerName, targetServerNam
       allPassed = false;
     }
 
-    // 3. Check target destination exists
+    // 4. Check target destination exists
     process.stdout.write('  [....] Target server destination');
-    const targetServer = await api.getServer(targetServerName);
     if (targetServer) {
       const targetDestination = await cloner.getDestination(targetServer.id);
       if (targetDestination) {
@@ -69,60 +83,61 @@ async function runPreflightChecks(config, api, sourceServerName, targetServerNam
         allPassed = false;
       }
     } else {
-      process.stdout.write('\r  [FAIL] Target server destination - server not found\n');
-      allPassed = false;
+      process.stdout.write('\r  [SKIP] Target server destination - server not found\n');
     }
 
-    await cloner.disconnect();
+    // 5. SSH connectivity (only if servers found)
+    ssh = new SSHManager(config.sshKeysPath);
+
+    if (sourceServer) {
+      try {
+        process.stdout.write('  [....] Source server SSH');
+        await ssh.connect(sourceServer);
+        process.stdout.write('\r  [ OK ] Source server SSH\n');
+
+        // Check rsync on source
+        process.stdout.write('  [....] Source server rsync');
+        const sourceHasRsync = await ssh.checkCommand(sourceServerName, 'rsync');
+        if (sourceHasRsync) {
+          process.stdout.write('\r  [ OK ] Source server rsync\n');
+        } else {
+          process.stdout.write('\r  [FAIL] Source server rsync - not installed\n');
+          allPassed = false;
+        }
+      } catch (err) {
+        process.stdout.write(`\r  [FAIL] Source server SSH - ${err.message}\n`);
+        allPassed = false;
+      }
+    }
+
+    if (targetServer) {
+      try {
+        process.stdout.write('  [....] Target server SSH');
+        await ssh.connect(targetServer);
+        process.stdout.write('\r  [ OK ] Target server SSH\n');
+
+        // Check rsync on target
+        process.stdout.write('  [....] Target server rsync');
+        const targetHasRsync = await ssh.checkCommand(targetServerName, 'rsync');
+        if (targetHasRsync) {
+          process.stdout.write('\r  [ OK ] Target server rsync\n');
+        } else {
+          process.stdout.write('\r  [FAIL] Target server rsync - not installed\n');
+          allPassed = false;
+        }
+      } catch (err) {
+        process.stdout.write(`\r  [FAIL] Target server SSH - ${err.message}\n`);
+        allPassed = false;
+      }
+    }
+
   } catch (err) {
     process.stdout.write(`\r  [FAIL] Database connection - ${err.message}\n`);
     allPassed = false;
+  } finally {
+    if (ssh) await ssh.disconnectAll();
+    if (cloner) await cloner.disconnect();
   }
-
-  // 4. SSH connectivity
-  const ssh = new SSHManager(config.sshKeysPath);
-
-  try {
-    process.stdout.write('  [....] Source server SSH');
-    const sourceServer = await api.getServer(sourceServerName);
-    await ssh.connect(sourceServer);
-    process.stdout.write('\r  [ OK ] Source server SSH\n');
-
-    // Check rsync on source
-    process.stdout.write('  [....] Source server rsync');
-    const sourceHasRsync = await ssh.checkCommand(sourceServerName, 'rsync');
-    if (sourceHasRsync) {
-      process.stdout.write('\r  [ OK ] Source server rsync\n');
-    } else {
-      process.stdout.write('\r  [FAIL] Source server rsync - not installed\n');
-      allPassed = false;
-    }
-  } catch (err) {
-    process.stdout.write(`\r  [FAIL] Source server SSH - ${err.message}\n`);
-    allPassed = false;
-  }
-
-  try {
-    process.stdout.write('  [....] Target server SSH');
-    const targetServer = await api.getServer(targetServerName);
-    await ssh.connect(targetServer);
-    process.stdout.write('\r  [ OK ] Target server SSH\n');
-
-    // Check rsync on target
-    process.stdout.write('  [....] Target server rsync');
-    const targetHasRsync = await ssh.checkCommand(targetServerName, 'rsync');
-    if (targetHasRsync) {
-      process.stdout.write('\r  [ OK ] Target server rsync\n');
-    } else {
-      process.stdout.write('\r  [FAIL] Target server rsync - not installed\n');
-      allPassed = false;
-    }
-  } catch (err) {
-    process.stdout.write(`\r  [FAIL] Target server SSH - ${err.message}\n`);
-    allPassed = false;
-  }
-
-  await ssh.disconnectAll();
 
   console.log('');
 
@@ -269,7 +284,6 @@ async function interactiveMove() {
     // 8. Pre-flight checks
     const checksPassed = await runPreflightChecks(
       config,
-      api,
       sourceServer,
       targetServer,
       resourceUuid,

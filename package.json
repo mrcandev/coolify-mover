@@ -1,8 +1,14 @@
 {
   "name": "coolify-mover",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "CLI tool to migrate volumes and resources between Coolify servers",
   "main": "src/index.js",
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
   "bin": {
     "coolify-mover": "./bin/coolify-mover.js"
   },
