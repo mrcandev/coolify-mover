@@ -1,16 +1,48 @@
 #!/usr/bin/env node
 
-require('dotenv').config();
 const { program } = require('commander');
 const moveResource = require('../src/commands/move');
 const volumeTransfer = require('../src/commands/volume');
 const listResources = require('../src/commands/list');
 const batchMigrate = require('../src/commands/batch');
+const { interactiveMove } = require('../src/commands/interactive');
+const { initConfig } = require('../src/utils/config');
 
 program
   .name('coolify-mover')
-  .description('CLI tool to migrate volumes and resources between Coolify servers')
-  .version('1.1.0');
+  .description('CLI tool to migrate resources between Coolify servers')
+  .version('1.2.0');
+
+// Init command - create config file
+program
+  .command('init')
+  .description('Create config file at ~/.coolify-mover/.env')
+  .action(() => {
+    const result = initConfig();
+    if (result.exists) {
+      console.log(`Config already exists: ${result.path}`);
+    } else {
+      console.log(`Config created: ${result.path}`);
+      console.log('');
+      console.log('Next steps:');
+      console.log(`  1. Edit the config: nano ${result.path}`);
+      console.log('  2. Set your COOLIFY_API_TOKEN');
+      console.log('  3. Run: coolify-mover list');
+    }
+  });
+
+// Interactive move command (no arguments)
+program
+  .command('migrate')
+  .description('Interactive migration wizard')
+  .action(async () => {
+    try {
+      await interactiveMove();
+    } catch (error) {
+      console.error('Error:', error.message);
+      process.exit(1);
+    }
+  });
 
 program
   .command('move')

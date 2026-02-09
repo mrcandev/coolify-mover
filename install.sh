@@ -60,8 +60,9 @@ echo "Installing dependencies..."
 cd "$INSTALL_DIR"
 npm install --production
 
-# Create symlink
-ln -sf "$INSTALL_DIR/bin/coolify-mover.js" /usr/local/bin/coolify-mover
+# Create global command
+cd "$INSTALL_DIR"
+npm link 2>/dev/null || ln -sf "$INSTALL_DIR/bin/coolify-mover.js" /usr/local/bin/coolify-mover
 chmod +x "$INSTALL_DIR/bin/coolify-mover.js"
 
 echo -e "${GREEN}[OK]${NC} Installed to $INSTALL_DIR"
