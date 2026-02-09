@@ -1,8 +1,141 @@
 const inquirer = require('inquirer');
 const CoolifyAPI = require('../api/coolify');
+const ResourceCloner = require('../db/clone');
+const SSHManager = require('../ssh/connection');
 const { getConfig } = require('../utils/config');
 const logger = require('../utils/logger');
 const moveResource = require('./move');
+
+async function runPreflightChecks(config, api, sourceServerName, targetServerName, resourceUuid, resourceType) {
+  const checks = [];
+  let allPassed = true;
+
+  console.log('');
+  logger.step('Running pre-flight checks...');
+  console.log('');
+
+  // 1. Database connection
+  process.stdout.write('  [....] Database connection');
+  try {
+    const cloner = new ResourceCloner(config.dbConfig);
+    await cloner.connect();
+
+    // 2. Check resource exists
+    process.stdout.write('\r  [ OK ] Database connection\n');
+    process.stdout.write('  [....] Resource lookup');
+
+    let resourceInfo = null;
+    let dbTable = null;
+
+    if (resourceType === 'service') {
+      resourceInfo = await cloner.getService(resourceUuid);
+    } else {
+      const dbTypes = [
+        { table: 'standalone_postgresqls', type: 'postgresql' },
+        { table: 'standalone_redis', type: 'redis' },
+        { table: 'standalone_mysqls', type: 'mysql' },
+        { table: 'standalone_mariadbs', type: 'mariadb' },
+        { table: 'standalone_mongodbs', type: 'mongodb' },
+        { table: 'standalone_keydbs', type: 'keydb' },
+        { table: 'standalone_dragonflies', type: 'dragonfly' },
+        { table: 'standalone_clickhouses', type: 'clickhouse' }
+      ];
+
+      for (const db of dbTypes) {
+        resourceInfo = await cloner.getStandaloneDatabase(db.table, resourceUuid);
+        if (resourceInfo) {
+          dbTable = db.table;
+          break;
+        }
+      }
+    }
+
+    if (resourceInfo) {
+      process.stdout.write('\r  [ OK ] Resource lookup\n');
+    } else {
+      process.stdout.write('\r  [FAIL] Resource lookup - not found in database\n');
+      allPassed = false;
+    }
+
+    // 3. Check target destination exists
+    process.stdout.write('  [....] Target server destination');
+    const targetServer = await api.getServer(targetServerName);
+    if (targetServer) {
+      const targetDestination = await cloner.getDestination(targetServer.id);
+      if (targetDestination) {
+        process.stdout.write('\r  [ OK ] Target server destination\n');
+      } else {
+        process.stdout.write('\r  [FAIL] Target server destination - no Docker destination found\n');
+        allPassed = false;
+      }
+    } else {
+      process.stdout.write('\r  [FAIL] Target server destination - server not found\n');
+      allPassed = false;
+    }
+
+    await cloner.disconnect();
+  } catch (err) {
+    process.stdout.write(`\r  [FAIL] Database connection - ${err.message}\n`);
+    allPassed = false;
+  }
+
+  // 4. SSH connectivity
+  const ssh = new SSHManager(config.sshKeysPath);
+
+  try {
+    process.stdout.write('  [....] Source server SSH');
+    const sourceServer = await api.getServer(sourceServerName);
+    await ssh.connect(sourceServer);
+    process.stdout.write('\r  [ OK ] Source server SSH\n');
+
+    // Check rsync on source
+    process.stdout.write('  [....] Source server rsync');
+    const sourceHasRsync = await ssh.checkCommand(sourceServerName, 'rsync');
+    if (sourceHasRsync) {
+      process.stdout.write('\r  [ OK ] Source server rsync\n');
+    } else {
+      process.stdout.write('\r  [FAIL] Source server rsync - not installed\n');
+      allPassed = false;
+    }
+  } catch (err) {
+    process.stdout.write(`\r  [FAIL] Source server SSH - ${err.message}\n`);
+    allPassed = false;
+  }
+
+  try {
+    process.stdout.write('  [....] Target server SSH');
+    const targetServer = await api.getServer(targetServerName);
+    await ssh.connect(targetServer);
+    process.stdout.write('\r  [ OK ] Target server SSH\n');
+
+    // Check rsync on target
+    process.stdout.write('  [....] Target server rsync');
+    const targetHasRsync = await ssh.checkCommand(targetServerName, 'rsync');
+    if (targetHasRsync) {
+      process.stdout.write('\r  [ OK ] Target server rsync\n');
+    } else {
+      process.stdout.write('\r  [FAIL] Target server rsync - not installed\n');
+      allPassed = false;
+    }
+  } catch (err) {
+    process.stdout.write(`\r  [FAIL] Target server SSH - ${err.message}\n`);
+    allPassed = false;
+  }
+
+  await ssh.disconnectAll();
+
+  console.log('');
+
+  if (allPassed) {
+    logger.success('All pre-flight checks passed!');
+  } else {
+    logger.error('Some pre-flight checks failed. Please fix the issues above before proceeding.');
+  }
+
+  console.log('');
+
+  return allPassed;
+}
 
 async function interactiveMove() {
   const config = getConfig();
@@ -123,7 +256,7 @@ async function interactiveMove() {
       }
     ]);
 
-    // 7. Confirm
+    // 7. Summary
     console.log('');
     console.log('Migration summary:');
     console.log(`  Resource:      ${selectedResource.name}`);
@@ -132,8 +265,34 @@ async function interactiveMove() {
     console.log(`  To:            ${targetServer}`);
     console.log(`  Stop source:   ${options.includes('stopSource') ? 'Yes' : 'No'}`);
     console.log(`  Dry run:       ${options.includes('dryRun') ? 'Yes' : 'No'}`);
-    console.log('');
 
+    // 8. Pre-flight checks
+    const checksPassed = await runPreflightChecks(
+      config,
+      api,
+      sourceServer,
+      targetServer,
+      resourceUuid,
+      selectedResource.resourceType
+    );
+
+    if (!checksPassed) {
+      const { continueAnyway } = await inquirer.prompt([
+        {
+          type: 'confirm',
+          name: 'continueAnyway',
+          message: 'Some checks failed. Continue anyway?',
+          default: false
+        }
+      ]);
+
+      if (!continueAnyway) {
+        logger.info('Migration cancelled.');
+        return;
+      }
+    }
+
+    // 9. Confirm
     const { confirm } = await inquirer.prompt([
       {
         type: 'confirm',
@@ -148,7 +307,7 @@ async function interactiveMove() {
       return;
     }
 
-    // 8. Run migration
+    // 10. Run migration
     console.log('');
     await moveResource({
       resource: resourceUuid,

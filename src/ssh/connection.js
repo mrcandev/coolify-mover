@@ -90,6 +90,11 @@ class SSHManager {
     await this.exec(serverName, `docker volume create ${volumeName}`);
   }
 
+  async checkCommand(serverName, command) {
+    const result = await this.exec(serverName, `which ${command} && echo "found" || echo "not found"`);
+    return result.stdout.includes('found');
+  }
+
   async disconnect(serverName) {
     const ssh = this.connections.get(serverName);
     if (ssh) {
