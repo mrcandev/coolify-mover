@@ -18,13 +18,14 @@ class CoolifyDB {
   }
 
   query(sql, params = []) {
-    // Replace $1, $2, etc. with actual values
+    // Replace $1, $2, etc. with actual values (reverse order to handle $10 before $1)
     let finalSql = sql;
-    params.forEach((param, index) => {
-      const placeholder = `$${index + 1}`;
+    for (let i = params.length - 1; i >= 0; i--) {
+      const placeholder = `$${i + 1}`;
+      const param = params[i];
       const value = param === null ? 'NULL' : `'${String(param).replace(/'/g, "''")}'`;
       finalSql = finalSql.split(placeholder).join(value);
-    });
+    }
 
     // Escape for shell
     const escapedSql = finalSql.replace(/"/g, '\\"');
