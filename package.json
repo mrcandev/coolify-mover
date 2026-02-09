@@ -1,6 +1,6 @@
 {
   "name": "coolify-mover",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "description": "CLI tool to migrate volumes and resources between Coolify servers",
   "main": "src/index.js",
   "bin": {

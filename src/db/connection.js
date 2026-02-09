@@ -1,62 +1,85 @@
-const { Client } = require('pg');
 const { execSync } = require('child_process');
 
 class CoolifyDB {
   constructor(config = {}) {
-    this.config = {
-      host: config.host || process.env.COOLIFY_DB_HOST || this.autoDetectHost(),
-      port: config.port || process.env.COOLIFY_DB_PORT || 5432,
-      database: config.database || process.env.COOLIFY_DB_NAME || 'coolify',
-      user: config.user || process.env.COOLIFY_DB_USER || 'coolify',
-      password: config.password || process.env.COOLIFY_DB_PASSWORD || this.autoDetectPassword()
-    };
-    this.client = null;
-  }
-
-  // Auto-detect coolify-db container IP
-  autoDetectHost() {
-    try {
-      const result = execSync(
-        "docker inspect coolify-db --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' 2>/dev/null",
-        { encoding: 'utf8', timeout: 5000 }
-      );
-      return result.trim() || 'localhost';
-    } catch {
-      return 'localhost';
-    }
-  }
-
-  // Auto-detect password from coolify-db container
-  autoDetectPassword() {
-    try {
-      const result = execSync(
-        'docker exec coolify-db env 2>/dev/null | grep POSTGRES_PASSWORD | sed "s/POSTGRES_PASSWORD=//"',
-        { encoding: 'utf8', timeout: 5000 }
-      );
-      return result.trim() || 'coolify';
-    } catch {
-      return 'coolify';
-    }
+    this.container = config.container || process.env.COOLIFY_DB_CONTAINER || 'coolify-db';
+    this.database = config.database || process.env.COOLIFY_DB_NAME || 'coolify';
+    this.user = config.user || process.env.COOLIFY_DB_USER || 'coolify';
   }
 
   async connect() {
-    this.client = new Client(this.config);
-    await this.client.connect();
+    // Test connection
+    try {
+      this.query('SELECT 1');
+    } catch (err) {
+      throw new Error(`Cannot connect to database: ${err.message}`);
+    }
     return this;
   }
 
-  async query(sql, params = []) {
-    if (!this.client) {
-      throw new Error('Database not connected. Call connect() first.');
+  query(sql, params = []) {
+    // Replace $1, $2, etc. with actual values
+    let finalSql = sql;
+    params.forEach((param, index) => {
+      const placeholder = `$${index + 1}`;
+      const value = param === null ? 'NULL' : `'${String(param).replace(/'/g, "''")}'`;
+      finalSql = finalSql.replace(placeholder, value);
+    });
+
+    // Escape for shell
+    const escapedSql = finalSql.replace(/"/g, '\\"');
+
+    const cmd = `docker exec ${this.container} psql -U ${this.user} -d ${this.database} -t -A -c "${escapedSql}"`;
+
+    try {
+      const result = execSync(cmd, { encoding: 'utf8', maxBuffer: 50 * 1024 * 1024 });
+      return this.parseResult(result, finalSql);
+    } catch (err) {
+      throw new Error(`Query failed: ${err.message}`);
     }
-    return this.client.query(sql, params);
+  }
+
+  parseResult(output, sql) {
+    const lines = output.trim().split('\n').filter(line => line.length > 0);
+
+    // Check if it's a RETURNING query or SELECT
+    const isSelect = sql.trim().toUpperCase().startsWith('SELECT') || sql.includes('RETURNING');
+
+    if (!isSelect) {
+      return { rows: [], rowCount: 0 };
+    }
+
+    const rows = lines.map(line => {
+      const values = line.split('|');
+
+      // Get column names from query (simplified - works for our use case)
+      const selectMatch = sql.match(/SELECT\s+(.+?)\s+FROM/i);
+      if (selectMatch) {
+        const cols = selectMatch[1].split(',').map(c => {
+          const match = c.trim().match(/(?:.*\s+AS\s+)?(\w+)$/i);
+          return match ? match[1].toLowerCase() : c.trim().toLowerCase();
+        });
+
+        const row = {};
+        cols.forEach((col, i) => {
+          row[col] = values[i] === '' ? null : values[i];
+        });
+        return row;
+      }
+
+      // For RETURNING queries or complex queries, return as object with indexed keys
+      const row = {};
+      values.forEach((val, i) => {
+        row[`col${i}`] = val === '' ? null : val;
+      });
+      return row;
+    });
+
+    return { rows, rowCount: rows.length };
   }
 
   async disconnect() {
-    if (this.client) {
-      await this.client.end();
-      this.client = null;
-    }
+    // Nothing to disconnect with docker exec
   }
 
   // Generate UUID like Coolify does
