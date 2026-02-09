@@ -65,15 +65,21 @@ async function moveResource(options) {
       { table: 'standalone_clickhouses', type: 'clickhouse' }
     ];
 
+    let dbTable = null;
     for (const db of dbTypes) {
       if (!resourceInfo && (!detectedType || detectedType === 'database')) {
         resourceInfo = await cloner.getStandaloneDatabase(db.table, resource);
         if (resourceInfo) {
           detectedType = db.type;
-          volumes = await cloner.getStandaloneDatabaseVolumes(db.table, resource);
+          dbTable = db.table;
           break;
         }
       }
+    }
+
+    // Get volumes after we have resourceInfo.id
+    if (resourceInfo && dbTable) {
+      volumes = await cloner.getStandaloneDatabaseVolumes(dbTable, resourceInfo.id);
     }
 
     if (!resourceInfo) {

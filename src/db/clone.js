@@ -440,16 +440,13 @@ class ResourceCloner {
     return result.rows[0] || null;
   }
 
-  // Get volumes for standalone database
-  async getStandaloneDatabaseVolumes(table, uuid) {
-    const db = await this.getStandaloneDatabase(table, uuid);
-    if (!db) return [];
-
+  // Get volumes for standalone database by resource ID
+  async getStandaloneDatabaseVolumes(table, resourceId) {
     const resourceType = this.getModelName(table);
 
     const volumes = await this.db.query(
       `SELECT * FROM local_persistent_volumes WHERE resource_id = $1 AND resource_type = $2`,
-      [db.id, resourceType]
+      [resourceId, resourceType]
     );
 
     return volumes.rows;
