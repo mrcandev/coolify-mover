@@ -4,13 +4,26 @@ const { execSync } = require('child_process');
 class CoolifyDB {
   constructor(config = {}) {
     this.config = {
-      host: config.host || process.env.COOLIFY_DB_HOST || 'localhost',
+      host: config.host || process.env.COOLIFY_DB_HOST || this.autoDetectHost(),
       port: config.port || process.env.COOLIFY_DB_PORT || 5432,
       database: config.database || process.env.COOLIFY_DB_NAME || 'coolify',
       user: config.user || process.env.COOLIFY_DB_USER || 'coolify',
       password: config.password || process.env.COOLIFY_DB_PASSWORD || this.autoDetectPassword()
     };
     this.client = null;
+  }
+
+  // Auto-detect coolify-db container IP
+  autoDetectHost() {
+    try {
+      const result = execSync(
+        "docker inspect coolify-db --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' 2>/dev/null",
+        { encoding: 'utf8', timeout: 5000 }
+      );
+      return result.trim() || 'localhost';
+    } catch {
+      return 'localhost';
+    }
   }
 
   // Auto-detect password from coolify-db container
