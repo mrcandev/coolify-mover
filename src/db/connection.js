@@ -10,7 +10,7 @@ class CoolifyDB {
   async connect() {
     // Test connection
     try {
-      this.query('SELECT 1');
+      this.query('SELECT 1 AS test');
     } catch (err) {
       throw new Error(`Cannot connect to database: ${err.message}`);
     }
@@ -29,7 +29,8 @@ class CoolifyDB {
     // Escape for shell
     const escapedSql = finalSql.replace(/"/g, '\\"');
 
-    const cmd = `docker exec ${this.container} psql -U ${this.user} -d ${this.database} -t -A -c "${escapedSql}"`;
+    // Use -A for unaligned output, no -t so we get headers
+    const cmd = `docker exec ${this.container} psql -U ${this.user} -d ${this.database} -A -c "${escapedSql}"`;
 
     try {
       const result = execSync(cmd, { encoding: 'utf8', maxBuffer: 50 * 1024 * 1024 });
@@ -49,28 +50,22 @@ class CoolifyDB {
       return { rows: [], rowCount: 0 };
     }
 
-    const rows = lines.map(line => {
+    // Need at least header + one row
+    if (lines.length < 2) {
+      return { rows: [], rowCount: 0 };
+    }
+
+    // First line is header (column names)
+    const headers = lines[0].split('|').map(h => h.toLowerCase());
+
+    // Last line might be row count like "(1 row)" - skip it
+    const dataLines = lines.slice(1).filter(line => !line.match(/^\(\d+ rows?\)$/));
+
+    const rows = dataLines.map(line => {
       const values = line.split('|');
-
-      // Get column names from query (simplified - works for our use case)
-      const selectMatch = sql.match(/SELECT\s+(.+?)\s+FROM/i);
-      if (selectMatch) {
-        const cols = selectMatch[1].split(',').map(c => {
-          const match = c.trim().match(/(?:.*\s+AS\s+)?(\w+)$/i);
-          return match ? match[1].toLowerCase() : c.trim().toLowerCase();
-        });
-
-        const row = {};
-        cols.forEach((col, i) => {
-          row[col] = values[i] === '' ? null : values[i];
-        });
-        return row;
-      }
-
-      // For RETURNING queries or complex queries, return as object with indexed keys
       const row = {};
-      values.forEach((val, i) => {
-        row[`col${i}`] = val === '' ? null : val;
+      headers.forEach((col, i) => {
+        row[col] = values[i] === '' ? null : values[i];
       });
       return row;
     });
