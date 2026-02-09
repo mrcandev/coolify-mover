@@ -10,7 +10,7 @@ const batchMigrate = require('../src/commands/batch');
 program
   .name('coolify-mover')
   .description('CLI tool to migrate volumes and resources between Coolify servers')
-  .version('1.0.0');
+  .version('1.1.0');
 
 program
   .command('move')
@@ -19,6 +19,8 @@ program
   .requiredOption('-f, --from <server>', 'Source server name')
   .requiredOption('-t, --to <server>', 'Target server name')
   .option('--dry-run', 'Show what would be done without making changes')
+  .option('--skip-space-check', 'Skip disk space verification (not recommended)')
+  .option('--stop-source', 'Stop source service before migration (recommended for databases)')
   .action(async (options) => {
     try {
       await moveResource(options);
@@ -36,6 +38,7 @@ program
   .requiredOption('-t, --to <server>', 'Target server name')
   .requiredOption('--target-volume <name>', 'Target volume name')
   .option('--dry-run', 'Show what would be done without making changes')
+  .option('--skip-space-check', 'Skip disk space verification (not recommended)')
   .action(async (options) => {
     try {
       await volumeTransfer(options);
@@ -63,6 +66,7 @@ program
   .description('Run batch migration from config file')
   .requiredOption('-c, --config <file>', 'YAML config file path')
   .option('--dry-run', 'Show what would be done without making changes')
+  .option('--skip-space-check', 'Skip disk space verification (not recommended)')
   .action(async (options) => {
     try {
       await batchMigrate(options);

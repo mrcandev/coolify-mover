@@ -59,19 +59,23 @@ class CoolifyAPI {
     return data;
   }
 
-  async cloneService(uuid, targetServerId, destinationId) {
-    const { data } = await this.client.post(`/services/${uuid}/clone`, {
-      server_id: targetServerId,
-      destination_id: destinationId
-    });
+  async getServerResources(serverUuid) {
+    const { data } = await this.client.get(`/servers/${serverUuid}/resources`);
     return data;
   }
 
-  async cloneApplication(uuid, targetServerId, destinationId) {
-    const { data } = await this.client.post(`/applications/${uuid}/clone`, {
-      server_id: targetServerId,
-      destination_id: destinationId
-    });
+  async startService(uuid) {
+    const { data } = await this.client.post(`/services/${uuid}/start`);
+    return data;
+  }
+
+  async stopService(uuid) {
+    const { data } = await this.client.post(`/services/${uuid}/stop`);
+    return data;
+  }
+
+  async restartService(uuid) {
+    const { data } = await this.client.post(`/services/${uuid}/restart`);
     return data;
   }
 }

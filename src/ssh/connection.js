@@ -53,6 +53,31 @@ class SSHManager {
     return result.stdout.split('\t')[0] || 'Unknown';
   }
 
+  async getVolumeSizeBytes(serverName, volumeName) {
+    const result = await this.exec(
+      serverName,
+      `du -sb /var/lib/docker/volumes/${volumeName}/_data 2>/dev/null | cut -f1 || echo "0"`
+    );
+    return parseInt(result.stdout.trim(), 10) || 0;
+  }
+
+  async getAvailableSpace(serverName) {
+    // Get available space on /var/lib/docker/volumes in bytes
+    const result = await this.exec(
+      serverName,
+      `df -B1 /var/lib/docker/volumes 2>/dev/null | tail -1 | awk '{print $4}'`
+    );
+    return parseInt(result.stdout.trim(), 10) || 0;
+  }
+
+  formatBytes(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  }
+
   async checkVolumeExists(serverName, volumeName) {
     const result = await this.exec(
       serverName,

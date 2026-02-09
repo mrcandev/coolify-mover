@@ -5,7 +5,7 @@ const volumeTransfer = require('./volume');
 const logger = require('../utils/logger');
 
 async function batchMigrate(options) {
-  const { config: configPath, dryRun } = options;
+  const { config: configPath, dryRun, skipSpaceCheck } = options;
 
   // Read config file
   if (!fs.existsSync(configPath)) {
@@ -42,7 +42,8 @@ async function batchMigrate(options) {
           from: migration.from,
           to: migration.to,
           targetVolume: migration.target_volume || migration.volume,
-          dryRun
+          dryRun,
+          skipSpaceCheck
         });
       } else if (migration.resource) {
         // Full resource migration
@@ -50,7 +51,8 @@ async function batchMigrate(options) {
           resource: migration.resource,
           from: migration.from,
           to: migration.to,
-          dryRun
+          dryRun,
+          skipSpaceCheck
         });
       } else {
         throw new Error('Migration must specify either "resource" or "volume"');

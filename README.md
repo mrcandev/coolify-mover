@@ -1,30 +1,29 @@
 # coolify-mover
 
-CLI tool to migrate volumes and resources between Coolify servers.
+CLI tool to migrate resources between Coolify servers.
 
-Coolify lacks a built-in migration feature ([Issue #5014](https://github.com/coollabsio/coolify/issues/5014)). This tool fills that gap.
+Coolify doesn't have a built-in migration feature ([Issue #5014](https://github.com/coollabsio/coolify/issues/5014)). This tool fills that gap by cloning resources directly via database (same method as Coolify UI) and transferring volume data with rsync.
 
 > **Warning**
-> This is a community-developed tool, not an official Coolify product. It is provided as-is with no warranties or guarantees. **Always backup your data before migration.** Test with `--dry-run` first. The author is not responsible for any data loss or service disruption.
+> Community tool, not official. Always backup before migration. Test with `--dry-run` first.
 
-## Features
+## What it does
 
-- Migrate resources between Coolify servers
-- Transfer Docker volumes with rsync
+- Clones service/application config via Coolify's PostgreSQL database
+- Copies environment variables, volumes, sub-applications
+- Transfers volume data between servers with rsync
+- Checks disk space before transfer
 - Uses Coolify's existing SSH keys
-- Batch migration support via YAML config
-- Direct server-to-server or via localhost transfer
-- Dry-run mode for safe testing
 
-## Quick Install
+## Install
 
-Run this on your **Coolify main server**:
+Run on your Coolify server:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mrcandev/coolify-mover/main/install.sh | sudo bash
 ```
 
-### Manual Installation
+Or manually:
 
 ```bash
 cd /opt
@@ -35,162 +34,82 @@ cp .env.example .env
 nano .env  # Add your API token
 ```
 
-### NPM
-
-```bash
-npm install -g coolify-mover
-```
-
-## Before You Start
-
-1. **Backup everything** - Create snapshots of your servers/volumes
-2. **Test with --dry-run** - Always run with `--dry-run` flag first
-3. **Stop databases** - Stop PostgreSQL/MySQL before migration
-4. **Check disk space** - Ensure target server has enough space
-5. **Off-peak hours** - Run migrations during low traffic periods
-
-## Configuration
+## Setup
 
 Edit `/opt/coolify-mover/.env`:
 
 ```env
 COOLIFY_API_URL=http://localhost:8000/api/v1
-COOLIFY_API_TOKEN=your_api_token_here
+COOLIFY_API_TOKEN=your_token_here
 SSH_KEYS_PATH=/data/coolify/ssh/keys
-TEMP_DIR=/tmp/coolify-mover
 ```
 
-**Get API Token:** Coolify Dashboard → Settings → API Tokens → Create
+Get API token: Coolify Dashboard → Settings → API Tokens
+
+Database password is auto-detected from coolify-db container.
 
 ## Usage
 
-### List Resources
-
 ```bash
+# List resources
 coolify-mover list
 coolify-mover list --server my-server
+
+# Move resource (dry run first)
+coolify-mover move -r my-service -f server1 -t server2 --dry-run
+
+# Move resource (for real)
+coolify-mover move -r my-service -f server1 -t server2
+
+# Stop source before migration (good for databases)
+coolify-mover move -r postgres-db -f server1 -t server2 --stop-source
+
+# Transfer only volume data
+coolify-mover volume -v volume_name -f server1 -t server2 --target-volume new_name
 ```
 
-### Move Resource (Config + Data)
+## Flags
 
-```bash
-coolify-mover move --resource minio-storage --from server1 --to server2
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Show what would happen, don't do anything |
+| `--stop-source` | Stop source service before migration |
+| `--skip-space-check` | Skip disk space verification |
 
-# Dry run first
-coolify-mover move --resource minio-storage --from server1 --to server2 --dry-run
-```
+## How it works
 
-### Transfer Volume Only
+1. Connects to Coolify API to get server info
+2. Connects to coolify-db (PostgreSQL) to clone service record
+3. Copies related data: env vars, volumes, sub-apps, sub-dbs
+4. Creates new volume on target server
+5. Transfers data with rsync via SSH
 
-```bash
-coolify-mover volume \
-  --volume abc123_minio-data \
-  --from server1 \
-  --to server2 \
-  --target-volume xyz789_minio-data
-```
-
-### Batch Migration
-
-Create `migrations.yaml`:
-
-```yaml
-migrations:
-  - resource: minio-storage
-    from: old-server
-    to: new-server
-
-  - resource: postgres-db
-    from: old-server
-    to: new-server
-
-  - volume: custom_volume_name
-    from: old-server
-    to: new-server
-    target_volume: new_volume_name
-```
-
-Run:
-
-```bash
-coolify-mover batch --config migrations.yaml
-```
-
-## Database Migration
-
-For databases (PostgreSQL, MySQL, etc.), **stop the service first**:
-
-1. Coolify Dashboard → Stop the database service
-2. Run migration: `coolify-mover move --resource postgres-db --from A --to B`
-3. Deploy on new server
-
-This ensures data consistency.
-
-## How It Works
-
-```
-┌─────────────────────────────────────────┐
-│       Coolify Main Server               │
-│              (localhost)                │
-│                                         │
-│   coolify-mover reads:                  │
-│   - Coolify API (resources, servers)    │
-│   - SSH keys from /data/coolify/ssh/    │
-└─────────────────────────────────────────┘
-                    │
-       ┌────────────┴────────────┐
-       │ SSH                     │ SSH
-       ▼                         ▼
-┌──────────────┐          ┌──────────────┐
-│ Source       │  rsync   │ Target       │
-│ Server       │ ───────► │ Server       │
-│              │          │              │
-│ Volume: X    │          │ Volume: Y    │
-└──────────────┘          └──────────────┘
-```
+The clone process is the same as clicking "Clone Resource" in Coolify UI.
 
 ## Requirements
 
 - Node.js 18+
-- Coolify API Token
-- rsync installed on servers
-- SSH access (via Coolify managed keys)
-
-## Security
-
-- Runs only on Coolify main server (localhost)
-- Uses existing Coolify SSH keys (no new keys created)
-- API token stored locally in `.env`
-- Source data is never deleted (copy only)
+- Coolify API token
+- rsync on both servers
+- Run on Coolify main server (needs access to coolify-db)
 
 ## Troubleshooting
 
+**"Cannot connect to database"**
+- Make sure you're running on the Coolify server
+- Check if coolify-db container is running: `docker ps | grep coolify-db`
+
 **"SSH key not found"**
-- Check `SSH_KEYS_PATH` in `.env`
-- Verify server has a private key assigned in Coolify
+- Check SSH_KEYS_PATH in .env
+- Server must have a private key assigned in Coolify
 
 **"Resource not found"**
 - Use `coolify-mover list` to see available resources
 - Check resource name or UUID
 
-**"Connection refused"**
-- Ensure Coolify API is running on port 8000
-- Check `COOLIFY_API_URL` in `.env`
-
-## Contributing
-
-Pull requests welcome! Please open an issue first for major changes.
-
 ## Disclaimer
 
-This tool is provided "as is" without warranty of any kind. This is a community project and is **not affiliated with or endorsed by Coolify**. Use at your own risk.
-
-- No guarantee of data integrity during transfer
-- Not tested on all Coolify versions
-- May not work with all resource types
-- Author is not responsible for data loss or downtime
-
-**Always maintain backups and test in a non-production environment first.**
+This is a community project, not affiliated with Coolify. Use at your own risk. Always backup first.
 
 ## License
 
@@ -198,4 +117,4 @@ MIT
 
 ## Author
 
-**Ömer AYDINOĞLU** ([@mrcandev](https://github.com/mrcandev) / [Simeray](https://simeray.com))
+Ömer AYDINOĞLU ([@mrcandev](https://github.com/mrcandev))

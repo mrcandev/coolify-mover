@@ -1,6 +1,6 @@
 {
   "name": "coolify-mover",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "CLI tool to migrate volumes and resources between Coolify servers",
   "main": "src/index.js",
   "bin": {
@@ -34,7 +34,8 @@
     "node-ssh": "^13.1.0",
     "yaml": "^2.3.4",
     "ora": "^5.4.1",
-    "chalk": "^4.1.2"
+    "chalk": "^4.1.2",
+    "pg": "^8.11.3"
   },
   "engines": {
     "node": ">=18.0.0"

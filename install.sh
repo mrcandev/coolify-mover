@@ -81,6 +81,8 @@ if [ ! -f "$INSTALL_DIR/.env" ]; then
   echo ""
   echo "3. Set your COOLIFY_API_TOKEN"
   echo ""
+  echo "(Database password is auto-detected, no need to configure)"
+  echo ""
 fi
 
 echo ""

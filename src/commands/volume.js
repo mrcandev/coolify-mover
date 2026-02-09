@@ -5,7 +5,7 @@ const { getConfig } = require('../utils/config');
 const logger = require('../utils/logger');
 
 async function volumeTransfer(options) {
-  const { volume, from, to, targetVolume, dryRun } = options;
+  const { volume, from, to, targetVolume, dryRun, skipSpaceCheck } = options;
   const config = getConfig();
 
   const api = new CoolifyAPI(config.apiUrl, config.apiToken);
@@ -46,7 +46,32 @@ async function volumeTransfer(options) {
     const sourceSize = await ssh.getVolumeSize(sourceServer.name, volume);
     logger.info(`  Source volume: ${volume} (${sourceSize})`);
 
-    // 4. Create target volume if needed
+    // 4. Pre-flight disk space check
+    if (!skipSpaceCheck) {
+      logger.step('Pre-flight checks...');
+      const sourceSizeBytes = await ssh.getVolumeSizeBytes(sourceServer.name, volume);
+      const targetAvailable = await ssh.getAvailableSpace(targetServer.name);
+
+      logger.info(`  Source volume size: ${ssh.formatBytes(sourceSizeBytes)}`);
+      logger.info(`  Target available:   ${ssh.formatBytes(targetAvailable)}`);
+
+      // Require at least 10% extra space for safety
+      const requiredSpace = Math.ceil(sourceSizeBytes * 1.1);
+
+      if (targetAvailable < requiredSpace) {
+        logger.error(`  [FAIL] Insufficient disk space on target server!`);
+        logger.error(`  Required (with 10% buffer): ${ssh.formatBytes(requiredSpace)}`);
+        logger.error(`  Available: ${ssh.formatBytes(targetAvailable)}`);
+        logger.info('\n  Use --skip-space-check to bypass this check (not recommended)');
+        throw new Error('Insufficient disk space on target server');
+      }
+
+      logger.success('  [OK] Sufficient disk space');
+    } else {
+      logger.warn('Skipping disk space check (--skip-space-check)');
+    }
+
+    // 5. Create target volume if needed
     logger.step('Preparing target volume...');
     const targetExists = await ssh.checkVolumeExists(targetServer.name, targetVolume);
     if (!targetExists && !dryRun) {
@@ -56,7 +81,7 @@ async function volumeTransfer(options) {
       logger.warn(`  Target volume already exists: ${targetVolume}`);
     }
 
-    // 5. Transfer volume data
+    // 6. Transfer volume data
     logger.step('Transferring volume data...');
     await transfer.transfer({
       sourceServer,

@@ -28,7 +28,7 @@ Thumbs.db
 dist/
 build/
 
-# Claude Code / AI
+# Local config
 .claude/
 
 # OS
