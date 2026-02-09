@@ -6,15 +6,31 @@ Coolify doesn't have built-in migration ([Issue #5014](https://github.com/coolla
 
 > **Note:** Community tool, not official. Always backup first. Test with `--dry-run`.
 
+## Supported Resources
+
+**Services:** Docker Compose services (meilisearch, minio, etc.)
+
+**Databases:**
+- PostgreSQL
+- MySQL
+- MariaDB
+- Redis
+- MongoDB
+- KeyDB
+- Dragonfly
+- ClickHouse
+
+**Applications:** Not yet supported (coming soon)
+
 ## Install
 
-### Option 1: npm (recommended)
+### npm (recommended)
 
 ```bash
 npm install -g coolify-mover
 ```
 
-### Option 2: Git clone
+### Git clone
 
 ```bash
 cd /opt
@@ -26,13 +42,13 @@ npm link
 
 ## Setup
 
-Run on your **Coolify server** (where coolify-db runs):
+Run on your **Coolify server** (needs coolify-db access):
 
 ```bash
 coolify-mover init
 ```
 
-This creates `~/.coolify-mover/.env`. Edit it:
+Edit the config file:
 
 ```bash
 nano ~/.coolify-mover/.env
@@ -47,12 +63,9 @@ SSH_KEYS_PATH=/data/coolify/ssh/keys
 ```
 
 Get API token:
-1. **Coolify Dashboard → Keys & Tokens → API Tokens**
-2. Enable "API Access" in **Settings → Advanced → API Settings** first
-3. Create token with permissions:
-   - `read` (required)
-   - `write` (for --stop-source flag)
-   - or just select `root` for all permissions
+1. Coolify Dashboard → Settings → Enable API
+2. Keys & Tokens → API Tokens → Create new token
+3. Give `read` and `write` permissions (or `root`)
 
 Database password is auto-detected from coolify-db container.
 
@@ -64,12 +77,12 @@ Database password is auto-detected from coolify-db container.
 coolify-mover migrate
 ```
 
-This will:
-1. Show your servers, let you pick source
-2. Show resources on that server, let you pick one
-3. Let you pick target server
-4. Ask for options (stop source, dry run)
-5. Run migration
+Step by step:
+1. Select source server
+2. Select resource to move
+3. Select target server
+4. Choose options (stop source, dry run)
+5. Confirm and migrate
 
 ### Command line
 
@@ -80,13 +93,13 @@ coolify-mover list
 # List resources on specific server
 coolify-mover list --server my-server
 
-# Move resource (test first with --dry-run)
-coolify-mover move -r my-service -f server1 -t server2 --dry-run
+# Dry run (test, no changes)
+coolify-mover move -r postgres-db -f server1 -t server2 --dry-run
 
-# Move for real
-coolify-mover move -r my-service -f server1 -t server2
+# Actual migration
+coolify-mover move -r postgres-db -f server1 -t server2
 
-# Stop source before migration (for databases)
+# Stop source before migration (recommended for databases)
 coolify-mover move -r postgres-db -f server1 -t server2 --stop-source
 
 # Transfer only volume data
@@ -99,7 +112,7 @@ Create `migrations.yaml`:
 
 ```yaml
 migrations:
-  - resource: my-service
+  - resource: redis-db
     from: old-server
     to: new-server
 
@@ -113,6 +126,21 @@ Run:
 ```bash
 coolify-mover batch --config migrations.yaml
 ```
+
+## After Migration
+
+The tool does **not** delete the old resource. It renames it with `-old` suffix.
+
+```
+venueplus-redis  →  venueplus-redis-old
+```
+
+**What you need to do:**
+1. Deploy the new resource from Coolify dashboard
+2. Test that it works correctly
+3. If everything is OK, delete the old resource (`-old` one)
+
+> Don't delete the old resource until the new one is working! You may lose data.
 
 ## Commands
 
@@ -129,35 +157,34 @@ coolify-mover batch --config migrations.yaml
 
 | Flag | Description |
 |------|-------------|
-| `--dry-run` | Show what would happen, don't do anything |
-| `--stop-source` | Stop source service before migration |
+| `--dry-run` | Test mode, no changes |
+| `--stop-source` | Stop source before migration |
 | `--skip-space-check` | Skip disk space check |
 
-## How it works
+## How it Works
 
-1. Reads servers from Coolify API
-2. Clones service record in coolify-db (PostgreSQL)
-3. Copies env vars, volumes, sub-apps
-4. Transfers volume data via rsync over SSH
-5. New service appears in Coolify dashboard
-
-Same process as "Clone Resource" button in Coolify UI.
+1. Gets server info from Coolify API
+2. Clones resource in coolify-db (same as Clone button)
+3. Copies environment variables and volume records
+4. Transfers volume data via rsync
+5. Renames old resource with `-old` suffix
+6. New resource appears in Coolify dashboard
 
 ## Requirements
 
 - Node.js 18+
-- Run on Coolify main server (needs coolify-db access)
-- rsync on both servers
+- Must run on Coolify main server (needs coolify-db access)
+- rsync installed on both servers
 - Coolify API token
 
-## Config locations
+## Config Locations
 
 Tool looks for `.env` in this order:
 1. Current directory
 2. `~/.coolify-mover/.env`
 3. `/opt/coolify-mover/.env`
 
-Or use environment variables directly:
+Or use environment variables:
 
 ```bash
 export COOLIFY_API_URL=http://localhost:8000/api/v1
@@ -168,23 +195,18 @@ coolify-mover list
 ## Troubleshooting
 
 **"COOLIFY_API_URL is not set"**
-- Run `coolify-mover init` to create config
-- Or set environment variables
+- Run `coolify-mover init`
 
 **"Cannot connect to database"**
-- Must run on Coolify server
+- Are you on the Coolify server?
 - Check: `docker ps | grep coolify-db`
 
 **"SSH key not found"**
-- Server needs private key in Coolify
+- Is the server's private key defined in Coolify?
 - Check SSH_KEYS_PATH in config
 
 **"Resource not found"**
 - Run `coolify-mover list` to see available resources
-
-## Disclaimer
-
-Community project, not affiliated with Coolify. Use at your own risk.
 
 ## License
 
