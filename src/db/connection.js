@@ -23,7 +23,7 @@ class CoolifyDB {
     params.forEach((param, index) => {
       const placeholder = `$${index + 1}`;
       const value = param === null ? 'NULL' : `'${String(param).replace(/'/g, "''")}'`;
-      finalSql = finalSql.replace(placeholder, value);
+      finalSql = finalSql.split(placeholder).join(value);
     });
 
     // Escape for shell
